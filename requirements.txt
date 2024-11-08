@@ -1,13 +1,18 @@
-streamlit>=1.28.0
-openai>=1.3.0
-python-dotenv>=1.0.0
-logging>=0.5.1.2
-typing-extensions>=4.8.0
-dataclasses>=0.6
-datetime>=5.1
-json>=3.0.0
-concurrent-futures>=3.0.5
-enum34>=1.1.10
-requests>=2.31.0
-python-dateutil>=2.8.2
-pytz>=2023.3
+# Core dependencies
+streamlit==1.28.0
+openai==1.3.0
+
+# Python utilities
+python-dotenv==1.0.0
+typing-extensions==4.8.0
+requests==2.31.0
+
+# Date and time handling
+pytz==2023.3.post1
+python-dateutil==2.8.2
+
+# Others
+tqdm==4.66.1
+tenacity==8.2.3
+packaging==23.2
+markupsafe==2.1.3
