@@ -781,8 +781,41 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
         
         # Coluna 1: Texto e Análise Principal
         with col_texto:
-            # Texto do parágrafo
             st.markdown("### 📝 Texto Analisado")
+            
+            def marcar_erros_no_texto(texto: str, correcoes: CorrecaoGramatical) -> str:
+                if not correcoes or not correcoes.sugestoes:
+                    return texto
+                
+                # Ordenamos as sugestões por posição (offset) em ordem decrescente
+                sugestoes_ordenadas = sorted(
+                    correcoes.sugestoes,
+                    key=lambda x: x['posicao'],
+                    reverse=True
+                )
+                
+                texto_marcado = texto
+                for sugestao in sugestoes_ordenadas:
+                    erro = sugestao['erro']
+                    posicao = sugestao['posicao']
+                    # Criamos uma span com tooltip mostrando a sugestão
+                    sugestao_texto = sugestao['sugestoes'][0] if sugestao['sugestoes'] else ''
+                    marcacao = f'<span style="background-color: rgba(255, 107, 107, 0.3); border-bottom: 2px dashed #ff6b6b; cursor: help;" title="Sugestão: {sugestao_texto}">{erro}</span>'
+                    texto_marcado = (
+                        texto_marcado[:posicao] +
+                        marcacao +
+                        texto_marcado[posicao + len(erro):]
+                    )
+                
+                return texto_marcado
+
+            # Aplicar marcações no texto
+            texto_com_marcacoes = marcar_erros_no_texto(
+                analise.texto,
+                analise.correcao_gramatical
+            )
+            
+            # Exibir texto com marcações
             st.markdown(
                 f"""<div style='
                     background-color: #ffffff;
@@ -795,9 +828,23 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
                     margin: 10px 0;
                     border: 1px solid #ddd;
                     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                '>{analise.texto}</div>""",
+                '>{texto_com_marcacoes}</div>""",
                 unsafe_allow_html=True
             )
+            
+            # Adicionar legenda após o texto
+            if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
+                st.markdown(
+                    """<div style='margin-top: 10px; font-size: 14px; color: #666;'>
+                        <span style="background-color: rgba(255, 107, 107, 0.3); 
+                                   border-bottom: 2px dashed #ff6b6b; 
+                                   padding: 2px 5px;">
+                            Texto marcado
+                        </span>
+                        = Possível erro gramatical (passe o mouse para ver a sugestão)
+                    </div>""",
+                    unsafe_allow_html=True
+                )
             
             # Contagem de palavras
             palavras = len(analise.texto.split())
@@ -821,7 +868,7 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
         with col_metricas:
             st.markdown("### 📊 Métricas")
             
-            # Score geral
+            # Score estrutural
             score_color = get_score_color(analise.elementos.score)
             st.metric(
                 "Qualidade Estrutural",
@@ -916,7 +963,6 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
         
         # Tab 3: Dicas de Melhoria
         with tab_dicas:
-            # Dicas específicas para o tipo de parágrafo
             dicas = get_dicas_por_tipo(analise.tipo, analise.elementos.score)
             for dica in dicas:
                 st.markdown(
