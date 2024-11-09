@@ -775,222 +775,223 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
     """
     Exibe a análise completa em tempo real na interface Streamlit com todos os componentes.
     """
-    with st.expander(f"Análise do {analise.tipo.title()}", expanded=True):
-        # Layout principal em três colunas
-        col_texto, col_elementos, col_metricas = st.columns([0.5, 0.25, 0.25])
+    st.markdown(f"## Análise do {analise.tipo.title()}")
+    
+    # Layout principal em três colunas
+    col_texto, col_elementos, col_metricas = st.columns([0.5, 0.25, 0.25])
+    
+    # Coluna 1: Texto e Análise Principal
+    with col_texto:
+        st.markdown("### 📝 Texto Analisado")
         
-        # Coluna 1: Texto e Análise Principal
-        with col_texto:
-            st.markdown("### 📝 Texto Analisado")
+        def marcar_erros_no_texto(texto: str, correcoes: CorrecaoGramatical) -> str:
+            if not correcoes or not correcoes.sugestoes:
+                return texto
             
-            def marcar_erros_no_texto(texto: str, correcoes: CorrecaoGramatical) -> str:
-                if not correcoes or not correcoes.sugestoes:
-                    return texto
-                
-                # Ordenamos as sugestões por posição (offset) em ordem decrescente
-                sugestoes_ordenadas = sorted(
-                    correcoes.sugestoes,
-                    key=lambda x: x['posicao'],
-                    reverse=True
-                )
-                
-                texto_marcado = texto
-                for sugestao in sugestoes_ordenadas:
-                    erro = sugestao['erro']
-                    posicao = sugestao['posicao']
-                    # Criamos uma span com tooltip mostrando a sugestão
-                    sugestao_texto = sugestao['sugestoes'][0] if sugestao['sugestoes'] else ''
-                    marcacao = f'<span style="background-color: rgba(255, 107, 107, 0.3); border-bottom: 2px dashed #ff6b6b; cursor: help;" title="Sugestão: {sugestao_texto}">{erro}</span>'
-                    texto_marcado = (
-                        texto_marcado[:posicao] +
-                        marcacao +
-                        texto_marcado[posicao + len(erro):]
-                    )
-                
-                return texto_marcado
-
-            # Aplicar marcações no texto
-            texto_com_marcacoes = marcar_erros_no_texto(
-                analise.texto,
-                analise.correcao_gramatical
+            # Ordenamos as sugestões por posição (offset) em ordem decrescente
+            sugestoes_ordenadas = sorted(
+                correcoes.sugestoes,
+                key=lambda x: x['posicao'],
+                reverse=True
             )
             
-            # Exibir texto com marcações
+            texto_marcado = texto
+            for sugestao in sugestoes_ordenadas:
+                erro = sugestao['erro']
+                posicao = sugestao['posicao']
+                # Criamos uma span com tooltip mostrando a sugestão
+                sugestao_texto = sugestao['sugestoes'][0] if sugestao['sugestoes'] else ''
+                marcacao = f'<span style="background-color: rgba(255, 107, 107, 0.3); border-bottom: 2px dashed #ff6b6b; cursor: help;" title="Sugestão: {sugestao_texto}">{erro}</span>'
+                texto_marcado = (
+                    texto_marcado[:posicao] +
+                    marcacao +
+                    texto_marcado[posicao + len(erro):]
+                )
+            
+            return texto_marcado
+
+        # Aplicar marcações no texto
+        texto_com_marcacoes = marcar_erros_no_texto(
+            analise.texto,
+            analise.correcao_gramatical
+        )
+        
+        # Exibir texto com marcações
+        st.markdown(
+            f"""<div style='
+                background-color: #ffffff;
+                padding: 15px;
+                border-radius: 5px;
+                color: #000000;
+                font-family: Arial, sans-serif;
+                font-size: 16px;
+                line-height: 1.5;
+                margin: 10px 0;
+                border: 1px solid #ddd;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            '>{texto_com_marcacoes}</div>""",
+            unsafe_allow_html=True
+        )
+        
+        # Adicionar legenda após o texto
+        if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
             st.markdown(
-                f"""<div style='
-                    background-color: #ffffff;
-                    padding: 15px;
-                    border-radius: 5px;
-                    color: #000000;
-                    font-family: Arial, sans-serif;
-                    font-size: 16px;
-                    line-height: 1.5;
-                    margin: 10px 0;
-                    border: 1px solid #ddd;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                '>{texto_com_marcacoes}</div>""",
+                """<div style='margin-top: 10px; font-size: 14px; color: #666;'>
+                    <span style="background-color: rgba(255, 107, 107, 0.3); 
+                               border-bottom: 2px dashed #ff6b6b; 
+                               padding: 2px 5px;">
+                        Texto marcado
+                    </span>
+                    = Possível erro gramatical (passe o mouse para ver a sugestão)
+                </div>""",
                 unsafe_allow_html=True
             )
-            
-            # Adicionar legenda após o texto
-            if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
+        
+        # Contagem de palavras
+        palavras = len(analise.texto.split())
+        st.caption(f"Total de palavras: {palavras}")
+    
+    # Coluna 2: Elementos e Estrutura
+    with col_elementos:
+        st.markdown("### 🎯 Elementos")
+        
+        # Elementos presentes
+        if analise.elementos.presentes:
+            for elemento in analise.elementos.presentes:
+                st.success(f"✓ {elemento.title()}")
+        
+        # Elementos ausentes
+        if analise.elementos.ausentes:
+            for elemento in analise.elementos.ausentes:
+                st.error(f"✗ {elemento.title()}")
+    
+    # Coluna 3: Métricas e Scores
+    with col_metricas:
+        st.markdown("### 📊 Métricas")
+        
+        # Score estrutural
+        score_color = get_score_color(analise.elementos.score)
+        st.metric(
+            "Qualidade Estrutural",
+            f"{int(analise.elementos.score * 100)}%",
+            delta=None,
+            delta_color="normal"
+        )
+        
+        # Score gramatical se disponível
+        if analise.correcao_gramatical:
+            erros = analise.correcao_gramatical.total_erros
+            score_gramatical = max(0, 100 - (erros * 10))  # Cada erro reduz 10%
+            st.metric(
+                "Qualidade Gramatical",
+                f"{score_gramatical}%",
+                delta=f"-{erros} erros" if erros > 0 else "Sem erros",
+                delta_color="inverse"
+            )
+    
+    # Seção de Feedback
+    st.markdown("### 💡 Feedback e Sugestões")
+    
+    # Tabs para diferentes tipos de feedback
+    tab_estrutura, tab_gramatical, tab_dicas = st.tabs([
+        "Análise Estrutural", 
+        "Correções Gramaticais", 
+        "Dicas de Melhoria"
+    ])
+    
+    # Tab 1: Análise Estrutural
+    with tab_estrutura:
+        if analise.feedback:
+            for feedback in analise.feedback:
                 st.markdown(
-                    """<div style='margin-top: 10px; font-size: 14px; color: #666;'>
-                        <span style="background-color: rgba(255, 107, 107, 0.3); 
-                                   border-bottom: 2px dashed #ff6b6b; 
-                                   padding: 2px 5px;">
-                            Texto marcado
-                        </span>
-                        = Possível erro gramatical (passe o mouse para ver a sugestão)
-                    </div>""",
+                    get_feedback_html(feedback),
                     unsafe_allow_html=True
                 )
-            
-            # Contagem de palavras
-            palavras = len(analise.texto.split())
-            st.caption(f"Total de palavras: {palavras}")
-        
-        # Coluna 2: Elementos e Estrutura
-        with col_elementos:
-            st.markdown("### 🎯 Elementos")
-            
-            # Elementos presentes
-            if analise.elementos.presentes:
-                for elemento in analise.elementos.presentes:
-                    st.success(f"✓ {elemento.title()}")
-            
-            # Elementos ausentes
-            if analise.elementos.ausentes:
-                for elemento in analise.elementos.ausentes:
-                    st.error(f"✗ {elemento.title()}")
-        
-        # Coluna 3: Métricas e Scores
-        with col_metricas:
-            st.markdown("### 📊 Métricas")
-            
-            # Score estrutural
-            score_color = get_score_color(analise.elementos.score)
-            st.metric(
-                "Qualidade Estrutural",
-                f"{int(analise.elementos.score * 100)}%",
-                delta=None,
-                delta_color="normal"
-            )
-            
-            # Score gramatical se disponível
-            if analise.correcao_gramatical:
-                erros = analise.correcao_gramatical.total_erros
-                score_gramatical = max(0, 100 - (erros * 10))  # Cada erro reduz 10%
-                st.metric(
-                    "Qualidade Gramatical",
-                    f"{score_gramatical}%",
-                    delta=f"-{erros} erros" if erros > 0 else "Sem erros",
-                    delta_color="inverse"
+        else:
+            st.info("Nenhum feedback estrutural disponível.")
+    
+    # Tab 2: Correções Gramaticais
+    with tab_gramatical:
+        if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
+            # Resumo das correções
+            col_resumo1, col_resumo2 = st.columns(2)
+            with col_resumo1:
+                st.metric("Total de Correções", analise.correcao_gramatical.total_erros)
+            with col_resumo2:
+                categorias = sorted(
+                    analise.correcao_gramatical.categorias_erros.items(),
+                    key=lambda x: x[1],
+                    reverse=True
                 )
-        
-        # Seção de Feedback
-        st.markdown("### 💡 Feedback e Sugestões")
-        
-        # Tabs para diferentes tipos de feedback
-        tab_estrutura, tab_gramatical, tab_dicas = st.tabs([
-            "Análise Estrutural", 
-            "Correções Gramaticais", 
-            "Dicas de Melhoria"
-        ])
-        
-        # Tab 1: Análise Estrutural
-        with tab_estrutura:
-            if analise.feedback:
-                for feedback in analise.feedback:
-                    st.markdown(
-                        get_feedback_html(feedback),
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.info("Nenhum feedback estrutural disponível.")
-        
-        # Tab 2: Correções Gramaticais
-        with tab_gramatical:
-            if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
-                # Resumo das correções
-                col_resumo1, col_resumo2 = st.columns(2)
-                with col_resumo1:
-                    st.metric("Total de Correções", analise.correcao_gramatical.total_erros)
-                with col_resumo2:
-                    categorias = sorted(
-                        analise.correcao_gramatical.categorias_erros.items(),
-                        key=lambda x: x[1],
-                        reverse=True
-                    )
-                    if categorias:
-                        st.markdown("**Principais categorias:**")
-                        for categoria, count in categorias[:3]:
-                            st.markdown(f"- {categoria}: {count}")
-                
-                # Lista detalhada de correções
-                for i, sugestao in enumerate(analise.correcao_gramatical.sugestoes, 1):
-                    with st.container():
-                        st.markdown(
-                            f"""<div style='
-                                background-color: #262730;
-                                padding: 10px;
-                                border-radius: 5px;
-                                margin: 5px 0;
-                            '>
-                                <p><strong>Correção {i}:</strong></p>
-                                <p>🔍 Erro: "<span style='color: #ff6b6b'>{sugestao['erro']}</span>"</p>
-                                <p>✨ Sugestão: {', '.join(sugestao['sugestoes'][:1])}</p>
-                                <p>ℹ️ {sugestao['mensagem']}</p>
-                                <p>📍 Contexto: "{sugestao['contexto']}"</p>
-                            </div>""",
-                            unsafe_allow_html=True
-                        )
-                
-                # Texto corrigido
-                if analise.correcao_gramatical.texto_corrigido:
-                    with st.expander("Ver texto com correções aplicadas"):
-                        st.markdown(
-                            f"""<div style='
-                                background-color: #1a472a;
-                                padding: 15px;
-                                border-radius: 5px;
-                                margin: 10px 0;
-                            '>{analise.correcao_gramatical.texto_corrigido}</div>""",
-                            unsafe_allow_html=True
-                        )
-            else:
-                st.success("✓ Não foram encontrados erros gramaticais significativos.")
-        
-        # Tab 3: Dicas de Melhoria
-        with tab_dicas:
-            dicas = get_dicas_por_tipo(analise.tipo, analise.elementos.score)
-            for dica in dicas:
+                if categorias:
+                    st.markdown("**Principais categorias:**")
+                    for categoria, count in categorias[:3]:
+                        st.markdown(f"- {categoria}: {count}")
+            
+            # Lista detalhada de correções
+            st.markdown("#### Detalhamento das Correções")
+            for i, sugestao in enumerate(analise.correcao_gramatical.sugestoes, 1):
                 st.markdown(
                     f"""<div style='
-                        background-color: #1e2a3a;
+                        background-color: #262730;
                         padding: 10px;
                         border-radius: 5px;
                         margin: 5px 0;
                     '>
-                        💡 {dica}
+                        <p><strong>Correção {i}:</strong></p>
+                        <p>🔍 Erro: "<span style='color: #ff6b6b'>{sugestao['erro']}</span>"</p>
+                        <p>✨ Sugestão: {', '.join(sugestao['sugestoes'][:1])}</p>
+                        <p>ℹ️ {sugestao['mensagem']}</p>
+                        <p>📍 Contexto: "{sugestao['contexto']}"</p>
                     </div>""",
                     unsafe_allow_html=True
                 )
-        
-        # Rodapé com metadados
-        st.markdown("---")
-        col_meta1, col_meta2, col_meta3 = st.columns(3)
-        
-        with col_meta1:
-            st.caption(f"⏱️ Tempo de análise: {analise.tempo_analise:.2f}s")
-        
-        with col_meta2:
-            st.caption(f"📊 Modelo: {'IA + Básica' if analise.elementos.score > 0.3 else 'Básica'}")
-        
-        with col_meta3:
-            # Botão de feedback
-            if st.button("📝 Reportar Análise", key=f"report_{hash(analise.texto)}"):
-                st.info("Feedback registrado. Obrigado pela contribuição!")
+            
+            # Texto corrigido
+            st.markdown("#### Versão Corrigida")
+            if analise.correcao_gramatical.texto_corrigido:
+                st.markdown(
+                    f"""<div style='
+                        background-color: #1a472a;
+                        padding: 15px;
+                        border-radius: 5px;
+                        margin: 10px 0;
+                    '>{analise.correcao_gramatical.texto_corrigido}</div>""",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.success("✓ Não foram encontrados erros gramaticais significativos.")
+    
+    # Tab 3: Dicas de Melhoria
+    with tab_dicas:
+        dicas = get_dicas_por_tipo(analise.tipo, analise.elementos.score)
+        for dica in dicas:
+            st.markdown(
+                f"""<div style='
+                    background-color: #1e2a3a;
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin: 5px 0;
+                '>
+                    💡 {dica}
+                </div>""",
+                unsafe_allow_html=True
+            )
+    
+    # Rodapé com metadados
+    st.markdown("---")
+    col_meta1, col_meta2, col_meta3 = st.columns(3)
+    
+    with col_meta1:
+        st.caption(f"⏱️ Tempo de análise: {analise.tempo_analise:.2f}s")
+    
+    with col_meta2:
+        st.caption(f"📊 Modelo: {'IA + Básica' if analise.elementos.score > 0.3 else 'Básica'}")
+    
+    with col_meta3:
+        # Botão de feedback
+        if st.button("📝 Reportar Análise", key=f"report_{hash(analise.texto)}"):
+            st.info("Feedback registrado. Obrigado pela contribuição!")
 
 def get_dicas_por_tipo(tipo: str, score: float) -> List[str]:
     """
