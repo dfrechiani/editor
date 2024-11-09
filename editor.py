@@ -1233,29 +1233,99 @@ def main():
                 paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
                 
                 if paragrafos:
-                    # Análise individual de cada parágrafo
-                    for i, paragrafo in enumerate(paragrafos):
-                        tipo = detectar_tipo_paragrafo(paragrafo, i)
-                        analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
-                        mostrar_analise_tempo_real(analise)
+                    # Criar tabs para cada parágrafo
+                    tabs = st.tabs([
+                        f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
+                        for i, p in enumerate(paragrafos)
+                    ])
                     
-                    # Progresso geral
-                    total_paragrafos = len(paragrafos)
-                    progresso = min(total_paragrafos / 4, 1.0)
+                    # Análise em cada tab
+                    for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
+                        with tab:
+                            tipo = detectar_tipo_paragrafo(paragrafo, i)
+                            
+                            # Adiciona identificador visual do tipo de parágrafo
+                            icones = {
+                                "introducao": "🎯",
+                                "desenvolvimento1": "💡",
+                                "desenvolvimento2": "📚",
+                                "conclusao": "✨"
+                            }
+                            st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
+                            
+                            # Linha divisória visual
+                            st.markdown("""<hr style="border: 1px solid #464B5C;">""", 
+                                      unsafe_allow_html=True)
+                            
+                            # Análise do parágrafo
+                            analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
+                            mostrar_analise_tempo_real(analise)
                     
-                    st.markdown("### Progresso Geral")
-                    st.progress(
-                        progresso,
-                        text=f"Parágrafos: {total_paragrafos}/4 "
-                        f"({'Conclusão' if total_paragrafos >= 4 else f'Desenvolvimento {total_paragrafos}'})"
-                    )
+                    # Resumo geral após as tabs
+                    st.markdown("---")
+                    st.markdown("### 📊 Visão Geral da Redação")
                     
-                    # Dicas baseadas no progresso
-                    if total_paragrafos < 4:
-                        proximo_tipo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
-                        st.info(f"📝 Próximo passo: Desenvolva o parágrafo de {proximo_tipo}")
-                    else:
-                        st.success("✨ Parabéns! Você completou todos os parágrafos!")
+                    # Métricas gerais em colunas
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        total_paragrafos = len(paragrafos)
+                        progresso = min(total_paragrafos / 4, 1.0)
+                        st.metric(
+                            "Progresso da Redação",
+                            f"{int(progresso * 100)}%",
+                            f"{total_paragrafos}/4 parágrafos"
+                        )
+                    
+                    with col2:
+                        total_palavras = sum(len(p.split()) for p in paragrafos)
+                        st.metric(
+                            "Total de Palavras",
+                            total_palavras,
+                            "Meta: 2500-3000"
+                        )
+                    
+                    with col3:
+                        if total_paragrafos < 4:
+                            proximo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
+                            st.info(f"Próximo: {proximo}")
+                        else:
+                            st.success("✅ Estrutura Completa!")
+                    
+                    # Mini mapa dos parágrafos
+                    st.markdown("#### 🗺️ Estrutura da Redação")
+                    cols = st.columns(4)
+                    for i, col in enumerate(cols):
+                        with col:
+                            if i < total_paragrafos:
+                                st.markdown(
+                                    f"""<div style='
+                                        background-color: #1a472a;
+                                        padding: 10px;
+                                        border-radius: 5px;
+                                        text-align: center;
+                                    '>
+                                        {icones.get(detectar_tipo_paragrafo("", i), "📝")}
+                                        <br>
+                                        {detectar_tipo_paragrafo("", i).title()}
+                                    </div>""",
+                                    unsafe_allow_html=True
+                                )
+                            else:
+                                st.markdown(
+                                    """<div style='
+                                        background-color: #262730;
+                                        padding: 10px;
+                                        border-radius: 5px;
+                                        text-align: center;
+                                        opacity: 0.5;
+                                    '>
+                                        ➕
+                                        <br>
+                                        Pendente
+                                    </div>""",
+                                    unsafe_allow_html=True
+                                )
         
         # Footer
         st.markdown("---")
