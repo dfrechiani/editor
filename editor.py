@@ -140,7 +140,7 @@ class VerificadorGramatical:
         return context
 
 # Configuração da API e modelos
-OPENAI_API_KEY = "sk-hhmUJsRrcVymoRI_kfRkq3lQxY5f2VtJtkoisdiwPfT3BlbkFJqHj8CkDnLBsBl14mVWpBHX2VK9yjsBjrLw15TTY8AA"  # Substitua pela sua chave real
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 class ModeloAnalise(str, Enum):
