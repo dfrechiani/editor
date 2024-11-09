@@ -437,32 +437,52 @@ def analisar_elementos_basicos(texto: str, tipo: str) -> AnaliseElementos:
         )
 
 def analisar_com_ia(texto: str, tipo: str, retry_count: int = 0) -> Optional[AnaliseElementos]:
-    """Realiza análise usando IA."""
+    """Realiza análise usando IA com tratamento robusto de erros."""
     if retry_count >= MAX_RETRIES or not client:
         return None
         
     try:
-        prompt = f"""Analise este {tipo} de redação ENEM:
-{texto}
+        # Prompt mais estruturado e explícito
+        prompt = f"""Analise este {tipo} de redação ENEM e retorne um JSON válido seguindo exatamente este formato, sem adicionar nada mais:
 
-Retorne apenas um objeto JSON com três arrays:
-- elementos_presentes: lista de elementos presentes
-- elementos_ausentes: lista de elementos ausentes
-- sugestoes: lista de sugestões de melhoria
+{{
+    "elementos_presentes": ["elemento1", "elemento2"],
+    "elementos_ausentes": ["elemento3", "elemento4"],
+    "sugestoes": ["sugestão 1", "sugestão 2"]
+}}
 
-Formato exato: {{"elementos_presentes":[],"elementos_ausentes":[],"sugestoes":[]}}"""
+Texto para análise:
+{texto}"""
 
         response = client.chat.completions.create(
             model=ModeloAnalise.RAPIDO,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{
+                "role": "system",
+                "content": "Você é um analisador de redações que retorna apenas JSON válido sem nenhum texto adicional."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }],
             temperature=0.3,
-            max_tokens=200,
+            max_tokens=500,
             timeout=API_TIMEOUT,
             response_format={"type": "json_object"}
         )
         
         try:
-            resultado = json.loads(response.choices[0].message.content)
+            # Limpa a resposta antes de fazer o parse
+            resposta_texto = response.choices[0].message.content.strip()
+            # Remove qualquer texto antes ou depois do JSON
+            resposta_texto = resposta_texto[resposta_texto.find("{"):resposta_texto.rfind("}")+1]
+            
+            resultado = json.loads(resposta_texto)
+            
+            # Validação dos campos obrigatórios
+            campos_obrigatorios = ["elementos_presentes", "elementos_ausentes", "sugestoes"]
+            if not all(campo in resultado for campo in campos_obrigatorios):
+                raise ValueError("Resposta JSON incompleta")
+                
             return AnaliseElementos(
                 presentes=resultado["elementos_presentes"][:3],
                 ausentes=resultado["elementos_ausentes"][:3],
@@ -471,9 +491,13 @@ Formato exato: {{"elementos_presentes":[],"elementos_ausentes":[],"sugestoes":[]
                 ),
                 sugestoes=resultado["sugestoes"][:2]
             )
-        except (json.JSONDecodeError, ValueError) as e:
+            
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
             logger.warning(f"Erro no parsing da resposta IA: {e}. Tentativa {retry_count + 1}")
             if retry_count < MAX_RETRIES:
+                # Espera um pouco antes de tentar novamente
+                from time import sleep
+                sleep(1)
                 return analisar_com_ia(texto, tipo, retry_count + 1)
             return None
             
