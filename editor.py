@@ -8,7 +8,8 @@ from openai import OpenAI
 import re
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
-
+import language_tool_python
+import concurrent.futures
 # Configuração da página
 st.set_page_config(
     page_title="Editor Interativo de Redação ENEM",
@@ -37,7 +38,103 @@ class AnaliseParagrafo:
     texto: str
     elementos: AnaliseElementos
     feedback: List[str]
+    correcao_gramatical: Optional[CorrecaoGramatical] = None
     tempo_analise: float = 0.0
+
+@dataclass
+class CorrecaoGramatical:
+    texto_original: str
+    sugestoes: List[dict]
+    total_erros: int
+    categorias_erros: dict
+    texto_corrigido: Optional[str] = None
+
+class VerificadorGramatical:
+    def __init__(self):
+        try:
+            self.tool = language_tool_python.LanguageToolPublicAPI('pt-BR')
+            self.initialized = True
+        except Exception as e:
+            logger.error(f"Erro ao inicializar LanguageTool: {e}")
+            self.initialized = False
+            
+    def verificar_texto(self, texto: str) -> CorrecaoGramatical:
+        """
+        Realiza verificação gramatical completa do texto.
+        """
+        if not self.initialized:
+            return CorrecaoGramatical(
+                texto_original=texto,
+                sugestoes=[],
+                total_erros=0,
+                categorias_erros={},
+                texto_corrigido=None
+            )
+            
+        try:
+            # Obtém todas as correções sugeridas
+            matches = self.tool.check(texto)
+            
+            # Organiza as sugestões por categoria
+            sugestoes = []
+            categorias_erros = {}
+            texto_corrigido = texto
+            
+            for match in matches:
+                categoria = match.category
+                if categoria not in categorias_erros:
+                    categorias_erros[categoria] = 0
+                categorias_erros[categoria] += 1
+                
+                sugestao = {
+                    'erro': texto[match.offset:match.offset + match.errorLength],
+                    'sugestoes': match.replacements,
+                    'mensagem': match.message,
+                    'categoria': categoria,
+                    'contexto': self._get_context(texto, match.offset, match.errorLength),
+                    'posicao': match.offset
+                }
+                sugestoes.append(sugestao)
+                
+                # Aplica a primeira sugestão para gerar texto corrigido
+                if match.replacements:
+                    texto_corrigido = texto_corrigido.replace(
+                        texto[match.offset:match.offset + match.errorLength],
+                        match.replacements[0]
+                    )
+            
+            return CorrecaoGramatical(
+                texto_original=texto,
+                sugestoes=sugestoes,
+                total_erros=len(sugestoes),
+                categorias_erros=categorias_erros,
+                texto_corrigido=texto_corrigido
+            )
+            
+        except Exception as e:
+            logger.error(f"Erro na verificação gramatical: {e}")
+            return CorrecaoGramatical(
+                texto_original=texto,
+                sugestoes=[],
+                total_erros=0,
+                categorias_erros={},
+                texto_corrigido=None
+            )
+    
+    def _get_context(self, texto: str, offset: int, length: int, context_size: int = 40) -> str:
+        """
+        Obtém o contexto do erro no texto.
+        """
+        start = max(0, offset - context_size)
+        end = min(len(texto), offset + length + context_size)
+        
+        context = texto[start:end]
+        if start > 0:
+            context = f"...{context}"
+        if end < len(texto):
+            context = f"{context}..."
+            
+        return context
 
 # Configuração da API e modelos
 OPENAI_API_KEY = "sk-hhmUJsRrcVymoRI_kfRkq3lQxY5f2VtJtkoisdiwPfT3BlbkFJqHj8CkDnLBsBl14mVWpBHX2VK9yjsBjrLw15TTY8AA"  # Substitua pela sua chave real
@@ -426,28 +523,72 @@ def combinar_analises(
         logger.error(f"Erro ao combinar análises: {e}")
         return analise_basica  # Em caso de erro, retorna apenas a análise básica
 
+# Função para mostrar as correções gramaticais na interface
+def mostrar_correcoes_gramaticais(correcao: CorrecaoGramatical):
+    """
+    Exibe as correções gramaticais na interface do Streamlit.
+    """
+    if not correcao or not correcao.sugestoes:
+        st.success("✓ Não foram encontrados erros gramaticais significativos.")
+        return
+        
+    st.markdown("### 📝 Correções Gramaticais")
+    
+    # Resumo dos erros
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Total de correções sugeridas", correcao.total_erros)
+    with col2:
+        # Mostra as categorias mais frequentes
+        categorias = sorted(
+            correcao.categorias_erros.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        if categorias:
+            st.markdown("**Principais categorias:**")
+            for categoria, count in categorias[:3]:
+                st.markdown(f"- {categoria}: {count}")
+    
+    # Detalhamento das correções
+    with st.expander("Ver todas as correções sugeridas", expanded=True):
+        for i, sugestao in enumerate(correcao.sugestoes, 1):
+            st.markdown(
+                f"""<div style='
+                    background-color: #262730;
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin: 5px 0;
+                '>
+                    <p><strong>Correção {i}:</strong></p>
+                    <p>🔍 Erro encontrado: "<span style='color: #ff6b6b'>{sugestao['erro']}</span>"</p>
+                    <p>✨ Sugestões: {', '.join(sugestao['sugestoes'][:3])}</p>
+                    <p>ℹ️ {sugestao['mensagem']}</p>
+                    <p>📍 Contexto: "{sugestao['contexto']}"</p>
+                </div>""",
+                unsafe_allow_html=True
+            )
+    
+    # Mostrar texto corrigido
+    if correcao.texto_corrigido:
+        with st.expander("Ver texto com correções aplicadas"):
+            st.markdown(
+                f"""<div style='
+                    background-color: #1a472a;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 10px 0;
+                '>{correcao.texto_corrigido}</div>""",
+                unsafe_allow_html=True
+            )
+
+
 def analisar_paragrafo_tempo_real(texto: str, tipo: str) -> AnaliseParagrafo:
-    """
-    Realiza análise completa do parágrafo em tempo real, combinando análise básica e IA.
-    """
     try:
         inicio = datetime.now()
         
-        # Verifica cache primeiro
-        analise_cache = cache.get(texto, tipo)
-        if analise_cache:
-            return AnaliseParagrafo(
-                tipo=tipo,
-                texto=texto,
-                elementos=analise_cache,
-                feedback=gerar_feedback_completo(analise_cache, tipo, texto),
-                tempo_analise=(datetime.now() - inicio).total_seconds()
-            )
-        
-        # Análise básica sempre
+        # Análise básica e IA (código existente)
         analise_basica = analisar_elementos_basicos(texto, tipo)
-        
-        # Análise IA apenas se texto tiver tamanho adequado
         analise_ia = None
         palavras = len(texto.split())
         if MIN_PALAVRAS_IA <= palavras <= MAX_PALAVRAS_IA:
@@ -456,39 +597,33 @@ def analisar_paragrafo_tempo_real(texto: str, tipo: str) -> AnaliseParagrafo:
                 analise_ia = future.result(timeout=API_TIMEOUT)
             except Exception as e:
                 logger.warning(f"Falha na análise IA: {e}")
-                analise_ia = None
         
-        # Combina resultados
         analise_final = combinar_analises(analise_basica, analise_ia)
-        
-        # Gera feedback completo
         feedback = gerar_feedback_completo(analise_final, tipo, texto)
+        
+        # Adicionar verificação gramatical
+        verificador = VerificadorGramatical()
+        correcao_gramatical = verificador.verificar_texto(texto)
         
         tempo_analise = (datetime.now() - inicio).total_seconds()
         
-        resultado = AnaliseParagrafo(
+        return AnaliseParagrafo(
             tipo=tipo,
             texto=texto,
             elementos=analise_final,
             feedback=feedback,
+            correcao_gramatical=correcao_gramatical,
             tempo_analise=tempo_analise
         )
         
-        # Cache apenas se análise for rápida e bem-sucedida
-        if tempo_analise < 2.0 and feedback:
-            cache.set(texto, tipo, analise_final)
-        
-        return resultado
-        
     except Exception as e:
         logger.error(f"Erro na análise em tempo real: {e}")
-        # Retorna análise básica em caso de erro
-        analise_basica = analisar_elementos_basicos(texto, tipo)
         return AnaliseParagrafo(
             tipo=tipo,
             texto=texto,
             elementos=analise_basica,
             feedback=gerar_feedback_basico(analise_basica, tipo),
+            correcao_gramatical=None,
             tempo_analise=0.0
         )
 
@@ -635,15 +770,16 @@ def analisar_coesao(texto: str) -> List[str]:
 
 def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
     """
-    Exibe a análise em tempo real na interface Streamlit com layout aprimorado.
+    Exibe a análise completa em tempo real na interface Streamlit com todos os componentes.
     """
     with st.expander(f"Análise do {analise.tipo.title()}", expanded=True):
-        # Layout em duas colunas
-        col1, col2 = st.columns([0.7, 0.3])
+        # Layout principal em três colunas
+        col_texto, col_elementos, col_metricas = st.columns([0.5, 0.25, 0.25])
         
-        with col1:
-            # Texto do parágrafo com estilo aprimorado
-            st.markdown("**Texto do parágrafo:**")
+        # Coluna 1: Texto e Análise Principal
+        with col_texto:
+            # Texto do parágrafo
+            st.markdown("### 📝 Texto Analisado")
             st.markdown(
                 f"""<div style='
                     background-color: #ffffff;
@@ -659,36 +795,189 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
                 '>{analise.texto}</div>""",
                 unsafe_allow_html=True
             )
+            
+            # Contagem de palavras
+            palavras = len(analise.texto.split())
+            st.caption(f"Total de palavras: {palavras}")
         
-        with col2:
-            # Elementos identificados com ícones
-            st.markdown("**Elementos identificados:**")
-            for elemento in analise.elementos.presentes:
-                st.success(f"✓ {elemento.title()}")
-            for elemento in analise.elementos.ausentes:
-                st.error(f"✗ {elemento.title()}")
+        # Coluna 2: Elementos e Estrutura
+        with col_elementos:
+            st.markdown("### 🎯 Elementos")
+            
+            # Elementos presentes
+            if analise.elementos.presentes:
+                for elemento in analise.elementos.presentes:
+                    st.success(f"✓ {elemento.title()}")
+            
+            # Elementos ausentes
+            if analise.elementos.ausentes:
+                for elemento in analise.elementos.ausentes:
+                    st.error(f"✗ {elemento.title()}")
         
-        # Barra de progresso com cores dinâmicas
-        score_color = get_score_color(analise.elementos.score)
-        st.progress(
-            analise.elementos.score,
-            text=f"Qualidade: {int(analise.elementos.score * 100)}%"
-        )
-
-        # Feedback detalhado
-        if analise.feedback:
-            st.markdown("### Como melhorar seu texto")
-            # Removemos o expander aninhado e mostramos direto
-            for feedback in analise.feedback:
+        # Coluna 3: Métricas e Scores
+        with col_metricas:
+            st.markdown("### 📊 Métricas")
+            
+            # Score geral
+            score_color = get_score_color(analise.elementos.score)
+            st.metric(
+                "Qualidade Estrutural",
+                f"{int(analise.elementos.score * 100)}%",
+                delta=None,
+                delta_color="normal"
+            )
+            
+            # Score gramatical se disponível
+            if analise.correcao_gramatical:
+                erros = analise.correcao_gramatical.total_erros
+                score_gramatical = max(0, 100 - (erros * 10))  # Cada erro reduz 10%
+                st.metric(
+                    "Qualidade Gramatical",
+                    f"{score_gramatical}%",
+                    delta=f"-{erros} erros" if erros > 0 else "Sem erros",
+                    delta_color="inverse"
+                )
+        
+        # Seção de Feedback
+        st.markdown("### 💡 Feedback e Sugestões")
+        
+        # Tabs para diferentes tipos de feedback
+        tab_estrutura, tab_gramatical, tab_dicas = st.tabs([
+            "Análise Estrutural", 
+            "Correções Gramaticais", 
+            "Dicas de Melhoria"
+        ])
+        
+        # Tab 1: Análise Estrutural
+        with tab_estrutura:
+            if analise.feedback:
+                for feedback in analise.feedback:
+                    st.markdown(
+                        get_feedback_html(feedback),
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.info("Nenhum feedback estrutural disponível.")
+        
+        # Tab 2: Correções Gramaticais
+        with tab_gramatical:
+            if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
+                # Resumo das correções
+                col_resumo1, col_resumo2 = st.columns(2)
+                with col_resumo1:
+                    st.metric("Total de Correções", analise.correcao_gramatical.total_erros)
+                with col_resumo2:
+                    categorias = sorted(
+                        analise.correcao_gramatical.categorias_erros.items(),
+                        key=lambda x: x[1],
+                        reverse=True
+                    )
+                    if categorias:
+                        st.markdown("**Principais categorias:**")
+                        for categoria, count in categorias[:3]:
+                            st.markdown(f"- {categoria}: {count}")
+                
+                # Lista detalhada de correções
+                for i, sugestao in enumerate(analise.correcao_gramatical.sugestoes, 1):
+                    with st.container():
+                        st.markdown(
+                            f"""<div style='
+                                background-color: #262730;
+                                padding: 10px;
+                                border-radius: 5px;
+                                margin: 5px 0;
+                            '>
+                                <p><strong>Correção {i}:</strong></p>
+                                <p>🔍 Erro: "<span style='color: #ff6b6b'>{sugestao['erro']}</span>"</p>
+                                <p>✨ Sugestão: {', '.join(sugestao['sugestoes'][:1])}</p>
+                                <p>ℹ️ {sugestao['mensagem']}</p>
+                                <p>📍 Contexto: "{sugestao['contexto']}"</p>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+                
+                # Texto corrigido
+                if analise.correcao_gramatical.texto_corrigido:
+                    with st.expander("Ver texto com correções aplicadas"):
+                        st.markdown(
+                            f"""<div style='
+                                background-color: #1a472a;
+                                padding: 15px;
+                                border-radius: 5px;
+                                margin: 10px 0;
+                            '>{analise.correcao_gramatical.texto_corrigido}</div>""",
+                            unsafe_allow_html=True
+                        )
+            else:
+                st.success("✓ Não foram encontrados erros gramaticais significativos.")
+        
+        # Tab 3: Dicas de Melhoria
+        with tab_dicas:
+            # Dicas específicas para o tipo de parágrafo
+            dicas = get_dicas_por_tipo(analise.tipo, analise.elementos.score)
+            for dica in dicas:
                 st.markdown(
-                    get_feedback_html(feedback),
+                    f"""<div style='
+                        background-color: #1e2a3a;
+                        padding: 10px;
+                        border-radius: 5px;
+                        margin: 5px 0;
+                    '>
+                        💡 {dica}
+                    </div>""",
                     unsafe_allow_html=True
                 )
         
-        # Tempo de análise
-        st.caption(
-            f"⏱️ Análise realizada em {analise.tempo_analise:.2f} segundos"
-        )
+        # Rodapé com metadados
+        st.markdown("---")
+        col_meta1, col_meta2, col_meta3 = st.columns(3)
+        
+        with col_meta1:
+            st.caption(f"⏱️ Tempo de análise: {analise.tempo_analise:.2f}s")
+        
+        with col_meta2:
+            st.caption(f"📊 Modelo: {'IA + Básica' if analise.elementos.score > 0.3 else 'Básica'}")
+        
+        with col_meta3:
+            # Botão de feedback
+            if st.button("📝 Reportar Análise", key=f"report_{hash(analise.texto)}"):
+                st.info("Feedback registrado. Obrigado pela contribuição!")
+
+def get_dicas_por_tipo(tipo: str, score: float) -> List[str]:
+    """
+    Retorna dicas específicas baseadas no tipo do parágrafo e score.
+    """
+    dicas_base = {
+        "introducao": [
+            "Apresente o tema de forma gradual, partindo do geral para o específico",
+            "Inclua uma tese clara e bem definida ao final",
+            "Use dados ou fatos relevantes para contextualizar o tema"
+        ],
+        "desenvolvimento1": [
+            "Desenvolva um argumento principal forte logo no início",
+            "Use exemplos concretos para sustentar seu ponto de vista",
+            "Mantenha o foco na tese apresentada na introdução"
+        ],
+        "desenvolvimento2": [
+            "Apresente um novo aspecto do tema, complementar ao primeiro desenvolvimento",
+            "Estabeleça conexões claras com os argumentos anteriores",
+            "Utilize repertório sociocultural relevante"
+        ],
+        "conclusao": [
+            "Retome os principais pontos discutidos de forma sintética",
+            "Proponha soluções viáveis e bem estruturadas",
+            "Especifique agentes, ações e meios para implementação"
+        ]
+    }
+    
+    # Adiciona dicas baseadas no score
+    dicas = dicas_base.get(tipo, [])
+    if score < 0.5:
+        dicas.append("⚠️ Reforce a estrutura básica do parágrafo")
+    elif score < 0.8:
+        dicas.append("📈 Adicione mais elementos de conexão entre as ideias")
+    
+    return dicas
 
 def get_score_color(score: float) -> str:
     """
