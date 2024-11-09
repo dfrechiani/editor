@@ -25,12 +25,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Classes de dados
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple
+
 @dataclass
 class AnaliseElementos:
     presentes: List[str]
     ausentes: List[str]
     score: float
     sugestoes: List[str]
+
+@dataclass
+class CorrecaoGramatical:
+    texto_original: str
+    sugestoes: List[dict]
+    total_erros: int
+    categorias_erros: dict
+    texto_corrigido: Optional[str] = None
 
 @dataclass
 class AnaliseParagrafo:
@@ -40,14 +51,6 @@ class AnaliseParagrafo:
     feedback: List[str]
     correcao_gramatical: Optional[CorrecaoGramatical] = None
     tempo_analise: float = 0.0
-
-@dataclass
-class CorrecaoGramatical:
-    texto_original: str
-    sugestoes: List[dict]
-    total_erros: int
-    categorias_erros: dict
-    texto_corrigido: Optional[str] = None
 
 class VerificadorGramatical:
     def __init__(self):
