@@ -1196,158 +1196,236 @@ def aplicar_estilos():
         </style>
     """, unsafe_allow_html=True)
 
-def main():
+
+def pagina_analise():
     """
-    Função principal do aplicativo.
+    Página de análise do código da aplicação de análise de redações do ENEM.
     """
-    try:
-        # Configurações iniciais
-        aplicar_estilos()
-        
-        # Sidebar
-        with st.sidebar:
-            st.markdown("### ⚙️ Configurações")
-            if 'tema' not in st.session_state:
-                st.session_state.tema = "Os desafios relacionados à Cultura do cancelamento na internet"
-            
-            tema = st.text_area(
-                "Tema da Redação",
-                value=st.session_state.tema,
-                help="Digite o tema para análise mais precisa",
-                height=100
-            )
-            if tema != st.session_state.tema:
-                st.session_state.tema = tema
-        
-        # Interface principal
-        st.title("📝 Editor Interativo de Redação ENEM")
+    st.title("🔍 Análise do Sistema de Avaliação de Redações ENEM")
+
+    tabs = st.tabs([
+        "Competências & Análise",
+        "Estrutura de Avaliação",
+        "Integração OpenAI",
+        "Interface & Feedback"
+    ])
+
+    with tabs[0]:
+        st.header("Competências do ENEM e Análise")
         st.markdown("""
-            Este editor analisa sua redação em tempo real, fornecendo feedback 
-            detalhado para cada parágrafo, com sugestões contextualizadas ao tema.
-            
-            **Como usar:**
-            1. Digite seu texto no editor abaixo
-            2. Separe os parágrafos com uma linha em branco
-            3. Receba feedback instantâneo sobre cada parágrafo
+        ### 📋 Competências Avaliadas:
         """)
         
-        # Editor
-        texto = st.text_area(
-            "Digite sua redação aqui:",
-            height=300,
-            key="editor_redacao",
-            help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco."
-        )
+        competencias = {
+            "competency1": "Domínio da Norma Culta",
+            "competency2": "Compreensão do Tema",
+            "competency3": "Seleção e Organização das Informações",
+            "competency4": "Conhecimento dos Mecanismos Linguísticos",
+            "competency5": "Proposta de Intervenção"
+        }
+
+        for comp, desc in competencias.items():
+            with st.expander(f"Competência {comp[-1]}: {desc}"):
+                st.markdown(f"""
+                #### Principais Aspectos Analisados:
+                - **Métodos de Análise**: `analisar_{comp}()`
+                - **Atribuição de Nota**: `atribuir_nota_{comp}()`
+                - **Validação de Erros**: `revisar_erros_{comp}()`
+                """)
+
+    with tabs[1]:
+        st.header("Estrutura de Avaliação")
+        st.markdown("""
+        ### 🔄 Fluxo de Processamento:
+        1. **Recebimento do Texto**
+           - Divisão em parágrafos
+           - Identificação de tipos de parágrafo
         
-        if texto:
-            with st.spinner("📊 Analisando sua redação..."):
-                paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
+        2. **Análise por Competência**
+           - Validação técnica
+           - Análise com IA
+           - Combinação de análises
+        
+        3. **Geração de Feedback**
+           - Identificação de erros
+           - Sugestões de melhoria
+           - Pontuação detalhada
+        """)
+
+    with tabs[2]:
+        st.header("Integração com IA")
+        st.markdown("""
+        ### 🤖 Uso do GPT-3.5 Turbo
+        - **Modelo Base**: `gpt-3.5-turbo-1106`
+        - **Fine-tuning**: Modelos específicos por competência
+        - **Prompts Estruturados**: Análise técnica e pedagógica
+        
+        #### Exemplos de Modelos Fine-tuned:
+        ```python
+        MODELO_COMP1 = "ft:gpt-4o-2024-08-06:personal:competencia-1:AHDQQucG"
+        MODELO_COMP2 = "ft:gpt-4o-2024-08-06:personal:competencia-2:AHDT84HO"
+        MODELO_COMP3 = "ft:gpt-4o-2024-08-06:personal:competencia-3:AHDUfZRb"
+        MODELO_COMP4 = "ft:gpt-4o-2024-08-06:personal:competencia-4:AHDXewU3"
+        MODELO_COMP5 = "ft:gpt-4o-2024-08-06:personal:competencia-5:AHGVPnJG"
+        ```
+        """)
+
+    with tabs[3]:
+        st.header("Interface e Feedback")
+        st.markdown("""
+        ### 💡 Sistema de Feedback
+        - **Análise em Tempo Real**
+        - **Feedback Visual**
+           - Marcação de erros no texto
+           - Gráficos de desempenho
+           - Sugestões contextualizadas
+        
+        ### 📊 Visualizações
+        - Gráfico de radar de competências
+        - Barras de progresso
+        - Marcadores de erro interativos
+        """)
+
+    # Botão para voltar ao editor
+    st.markdown("---")
+    if st.button("← Voltar ao Editor de Redação", type="primary"):
+        st.session_state.page = 'editor'
+        st.rerun()
+
+def main():
+    """
+    Função principal do aplicativo, controlando a navegação e funcionalidades.
+    """
+    try:
+        # Inicializar estado da página se não existir
+        if 'page' not in st.session_state:
+            st.session_state.page = 'editor'
+            
+        # Navegação entre páginas
+        if st.session_state.page == 'editor':
+            # Configurações iniciais
+            aplicar_estilos()
+            
+            # Sidebar
+            with st.sidebar:
+                st.markdown("### ⚙️ Configurações")
+                if 'tema' not in st.session_state:
+                    st.session_state.tema = "Os desafios relacionados à Cultura do cancelamento na internet"
                 
-                if paragrafos:
-                    # Criar tabs para cada parágrafo
-                    tabs = st.tabs([
-                        f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
-                        for i, p in enumerate(paragrafos)
-                    ])
+                tema = st.text_area(
+                    "Tema da Redação",
+                    value=st.session_state.tema,
+                    help="Digite o tema para análise mais precisa",
+                    height=100
+                )
+                if tema != st.session_state.tema:
+                    st.session_state.tema = tema
+            
+            # Interface principal
+            st.title("📝 Editor Interativo de Redação ENEM")
+            st.markdown("""
+                Este editor analisa sua redação em tempo real, fornecendo feedback 
+                detalhado para cada parágrafo, com sugestões contextualizadas ao tema.
+                
+                **Como usar:**
+                1. Digite seu texto no editor abaixo
+                2. Separe os parágrafos com uma linha em branco
+                3. Receba feedback instantâneo sobre cada parágrafo
+            """)
+            
+            # Editor
+            texto = st.text_area(
+                "Digite sua redação aqui:",
+                height=300,
+                key="editor_redacao",
+                help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco."
+            )
+            
+            if texto:
+                with st.spinner("📊 Analisando sua redação..."):
+                    paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
                     
-                    # Análise em cada tab
-                    for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
-                        with tab:
-                            tipo = detectar_tipo_paragrafo(paragrafo, i)
-                            
-                            # Adiciona identificador visual do tipo de parágrafo
-                            icones = {
-                                "introducao": "🎯",
-                                "desenvolvimento1": "💡",
-                                "desenvolvimento2": "📚",
-                                "conclusao": "✨"
-                            }
-                            st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
-                            
-                            # Linha divisória visual
-                            st.markdown("""<hr style="border: 1px solid #464B5C;">""", 
-                                      unsafe_allow_html=True)
-                            
-                            # Análise do parágrafo
-                            analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
-                            mostrar_analise_tempo_real(analise)
-                    
-                    # Resumo geral após as tabs
-                    st.markdown("---")
-                    st.markdown("### 📊 Visão Geral da Redação")
-                    
-                    # Métricas gerais em colunas
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        total_paragrafos = len(paragrafos)
-                        progresso = min(total_paragrafos / 4, 1.0)
-                        st.metric(
-                            "Progresso da Redação",
-                            f"{int(progresso * 100)}%",
-                            f"{total_paragrafos}/4 parágrafos"
-                        )
-                    
-                    with col2:
-                        total_palavras = sum(len(p.split()) for p in paragrafos)
-                        st.metric(
-                            "Total de Palavras",
-                            total_palavras,
-                            "Meta: 2500-3000"
-                        )
-                    
-                    with col3:
-                        if total_paragrafos < 4:
-                            proximo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
-                            st.info(f"Próximo: {proximo}")
-                        else:
-                            st.success("✅ Estrutura Completa!")
-                    
-                    # Mini mapa dos parágrafos
-                    st.markdown("#### 🗺️ Estrutura da Redação")
-                    cols = st.columns(4)
-                    for i, col in enumerate(cols):
-                        with col:
-                            if i < total_paragrafos:
-                                st.markdown(
-                                    f"""<div style='
-                                        background-color: #1a472a;
-                                        padding: 10px;
-                                        border-radius: 5px;
-                                        text-align: center;
-                                    '>
-                                        {icones.get(detectar_tipo_paragrafo("", i), "📝")}
-                                        <br>
-                                        {detectar_tipo_paragrafo("", i).title()}
-                                    </div>""",
-                                    unsafe_allow_html=True
-                                )
+                    if paragrafos:
+                        # Criar tabs para cada parágrafo
+                        tabs = st.tabs([
+                            f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
+                            for i, p in enumerate(paragrafos)
+                        ])
+                        
+                        # Análise em cada tab
+                        for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
+                            with tab:
+                                tipo = detectar_tipo_paragrafo(paragrafo, i)
+                                
+                                # Adiciona identificador visual do tipo de parágrafo
+                                icones = {
+                                    "introducao": "🎯",
+                                    "desenvolvimento1": "💡",
+                                    "desenvolvimento2": "📚",
+                                    "conclusao": "✨"
+                                }
+                                st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
+                                
+                                # Linha divisória visual
+                                st.markdown("""<hr style="border: 1px solid #464B5C;">""", 
+                                          unsafe_allow_html=True)
+                                
+                                # Análise do parágrafo
+                                analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
+                                mostrar_analise_tempo_real(analise)
+                        
+                        # Resumo geral após as tabs
+                        st.markdown("---")
+                        st.markdown("### 📊 Visão Geral da Redação")
+                        
+                        # Métricas gerais em colunas
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            total_paragrafos = len(paragrafos)
+                            progresso = min(total_paragrafos / 4, 1.0)
+                            st.metric(
+                                "Progresso da Redação",
+                                f"{int(progresso * 100)}%",
+                                f"{total_paragrafos}/4 parágrafos"
+                            )
+                        
+                        with col2:
+                            total_palavras = sum(len(p.split()) for p in paragrafos)
+                            st.metric(
+                                "Total de Palavras",
+                                total_palavras,
+                                "Meta: 2500-3000"
+                            )
+                        
+                        with col3:
+                            if total_paragrafos < 4:
+                                proximo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
+                                st.info(f"Próximo: {proximo}")
                             else:
-                                st.markdown(
-                                    """<div style='
-                                        background-color: #262730;
-                                        padding: 10px;
-                                        border-radius: 5px;
-                                        text-align: center;
-                                        opacity: 0.5;
-                                    '>
-                                        ➕
-                                        <br>
-                                        Pendente
-                                    </div>""",
-                                    unsafe_allow_html=True
-                                )
-        
-        # Footer
-        st.markdown("---")
-        st.markdown(
-            """<div style='text-align: center; opacity: 0.7;'>
-            Desenvolvido para auxiliar estudantes na preparação para o ENEM.
-            Para feedback e sugestões, use o botão de feedback abaixo de cada análise.
-            </div>""",
-            unsafe_allow_html=True
-        )
-        
+                                st.success("✅ Estrutura Completa!")
+            
+            # Botão para ir para análise do sistema
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("Ver Análise do Sistema", type="primary", use_container_width=True):
+                    st.session_state.page = 'analise'
+                    st.rerun()
+            
+            # Footer
+            st.markdown("---")
+            st.markdown(
+                """<div style='text-align: center; opacity: 0.7;'>
+                Desenvolvido para auxiliar estudantes na preparação para o ENEM.
+                Para feedback e sugestões, use o botão de feedback abaixo de cada análise.
+                </div>""",
+                unsafe_allow_html=True
+            )
+                
+        elif st.session_state.page == 'analise':
+            pagina_analise()
+            
     except Exception as e:
         logger.error(f"Erro na execução principal: {e}")
         st.error(
@@ -1356,6 +1434,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
