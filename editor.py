@@ -141,8 +141,18 @@ class VerificadorGramatical:
 
 
 # Configuração da API e modelos
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-client = OpenAI(api_key=OPENAI_API_KEY)
+import os
+
+# Configurar a chave API via variável de ambiente
+os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+
+# Inicializar o cliente da forma mais simples possível
+try:
+    client = OpenAI()
+except Exception as e:
+    st.error("Erro ao inicializar o cliente OpenAI")
+    st.error(str(e))
+    client = None
 
 class ModeloAnalise(str, Enum):
     RAPIDO = "gpt-3.5-turbo-1106"
