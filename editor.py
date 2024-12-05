@@ -141,12 +141,8 @@ class VerificadorGramatical:
 
 
 # Configuração da API e modelos
-# Configuração da API e modelos
-from openai._client import OpenAI
-from openai._models import BaseModel
-
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-client = OpenAI._client_base(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 class ModeloAnalise(str, Enum):
     RAPIDO = "gpt-3.5-turbo-1106"
