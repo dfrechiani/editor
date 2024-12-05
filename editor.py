@@ -139,13 +139,10 @@ class VerificadorGramatical:
             
         return context
 
+
 # Configuração da API e modelos
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-client = OpenAI(
-    api_key=OPENAI_API_KEY,
-    default_headers={"Content-Type": "application/json"},
-    timeout=60.0  # Aumentando o timeout para maior confiabilidade
-)
+client = OpenAI()  # Usará a chave da variável de ambiente
 
 class ModeloAnalise(str, Enum):
     RAPIDO = "gpt-3.5-turbo-1106"
