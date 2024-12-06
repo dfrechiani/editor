@@ -1,3 +1,4 @@
+# Importações básicas
 import streamlit as st
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -10,6 +11,10 @@ from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 import language_tool_python
 import concurrent.futures
+
+# Importações para visualização
+import plotly.graph_objects as go
+import plotly.express as px
 
 competencies = {
     'comp1': 'Competência 1 - Domínio da norma culta',
@@ -1302,24 +1307,116 @@ def pagina_analise():
 
 def criar_grafico_barras(notas: Dict[str, int]):
     """
-    Cria um gráfico de barras mostrando as notas por competência.
+    Cria um gráfico de barras interativo mostrando as notas por competência.
+    Esta função agora usa o plotly.graph_objects para criar uma visualização mais detalhada e interativa.
+    
+    Args:
+        notas (Dict[str, int]): Dicionário com as notas por competência
     """
+    # Definir cores para cada competência para melhor visualização
+    cores_competencias = {
+        'comp1': '#FF6B6B',  # Vermelho suave
+        'comp2': '#4ECDC4',  # Turquesa
+        'comp3': '#45B7D1',  # Azul claro
+        'comp4': '#96CEB4',  # Verde suave
+        'comp5': '#FFEEAD'   # Amarelo suave
+    }
+    
+    # Criar o gráfico de barras
     fig = go.Figure(data=[
         go.Bar(
             x=list(competencies.values()),
             y=[notas[comp] for comp in competencies.keys()],
-            marker_color=[competency_colors[comp] for comp in competencies.keys()]
+            marker_color=[cores_competencias[comp] for comp in competencies.keys()],
+            text=[notas[comp] for comp in competencies.keys()],
+            textposition='auto',
         )
     ])
     
+    # Personalizar o layout do gráfico
     fig.update_layout(
-        title="Notas por Competência",
+        title={
+            'text': 'Notas por Competência',
+            'y':0.95,
+            'x':0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        },
         xaxis_title="Competência",
         yaxis_title="Pontuação",
         yaxis_range=[0, 200],
-        showlegend=False
+        showlegend=False,
+        plot_bgcolor='rgba(255,255,255,0.9)',
+        paper_bgcolor='rgba(255,255,255,0.9)',
+        font=dict(
+            family="Arial, sans-serif",
+            size=12,
+            color="#2C3E50"
+        ),
+        margin=dict(l=50, r=50, t=70, b=50)
     )
     
+    # Adicionar linhas de grade para melhor legibilidade
+    fig.update_yaxes(
+        gridcolor='rgba(0,0,0,0.1)',
+        gridwidth=1,
+        zeroline=True,
+        zerolinecolor='rgba(0,0,0,0.2)',
+        zerolinewidth=1
+    )
+    
+    # Personalizar as barras
+    fig.update_traces(
+        texttemplate='%{text}',  # Mostra o valor exato
+        textposition='outside',   # Coloca o texto acima das barras
+        hovertemplate='<b>%{x}</b><br>Nota: %{y}<extra></extra>',  # Formato do hover
+        marker=dict(
+            line=dict(width=1, color='rgba(0,0,0,0.3)')  # Borda das barras
+        )
+    )
+    
+    # Exibir o gráfico no Streamlit
+    st.plotly_chart(fig, use_container_width=True)
+
+def mostrar_radar_competencias(notas: Dict[str, int]):
+    """
+    Cria um gráfico de radar mostrando o desempenho em cada competência.
+    
+    Args:
+        notas (Dict[str, int]): Dicionário com as notas por competência
+    """
+    # Preparar dados para o gráfico radar
+    categorias = list(competencies.values())
+    valores = [notas[comp] for comp in competencies.keys()]
+    
+    # Criar o gráfico radar
+    fig = go.Figure(data=go.Scatterpolar(
+        r=valores,
+        theta=categorias,
+        fill='toself',
+        line=dict(color='#45B7D1'),
+        fillcolor='rgba(69,183,209,0.3)'
+    ))
+    
+    # Atualizar layout
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 200]
+            )
+        ),
+        showlegend=False,
+        title={
+            'text': 'Perfil de Competências',
+            'y':0.95,
+            'x':0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        }
+    )
+    
+    # Exibir o gráfico
     st.plotly_chart(fig, use_container_width=True)
 
 def marcar_erros_por_competencia(texto: str, erros_especificos: dict, competencia: str) -> tuple:
