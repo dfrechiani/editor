@@ -2195,9 +2195,9 @@ def extrair_erros_do_resultado(resultado: str) -> List[Dict[str, str]]:
 def main():
     """
     Função principal da aplicação Streamlit.
-    Coordena a interface e o fluxo de análise.
+    Coordena a interface e o fluxo de análise da redação.
     """
-        
+    try:
         # Inicialização do estado
         if 'page' not in st.session_state:
             st.session_state.page = 'editor'
@@ -2210,7 +2210,7 @@ def main():
         if 'historico_analises' not in st.session_state:
             st.session_state.historico_analises = []
         
-        # Configuração de estilos e tema
+        # Configuração de estilos
         aplicar_estilos()
         
         # Navegação entre páginas
@@ -2231,6 +2231,16 @@ def main():
             # Interface principal
             st.title("📝 Editor Interativo de Redação ENEM")
             
+            st.markdown("""
+                Este editor analisa sua redação em tempo real, fornecendo feedback 
+                detalhado para cada parágrafo, com sugestões contextualizadas ao tema.
+                
+                **Como usar:**
+                1. Digite seu texto no editor abaixo
+                2. Separe os parágrafos com uma linha em branco
+                3. Receba feedback instantâneo sobre cada parágrafo
+            """)
+            
             # Verifica tema
             if not st.session_state.tema_redacao.strip():
                 st.warning("⚠️ Por favor, insira o tema da redação antes de começar.")
@@ -2241,16 +2251,40 @@ def main():
                 height=300,
                 key="editor_redacao",
                 value=st.session_state.redacao_texto,
-                disabled=not st.session_state.tema_redacao.strip()
+                disabled=not st.session_state.tema_redacao.strip(),
+                help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco."
             )
+            
+            # Se o editor estiver desabilitado, mostra mensagem
+            if not st.session_state.tema_redacao.strip():
+                st.info("📝 O editor será habilitado após a inserção do tema da redação.")
             
             # Atualiza estado quando o texto muda
             if texto != st.session_state.redacao_texto:
                 st.session_state.redacao_texto = texto
                 st.session_state.resultados = None
             
+            # Análise em tempo real se houver texto
+            if texto and st.session_state.tema_redacao.strip():
+                with st.spinner("📊 Analisando sua redação..."):
+                    paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
+                    
+                    if paragrafos:
+                        # Sistema de tabs para análise de parágrafos
+                        tabs = st.tabs([
+                            f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
+                            for i, p in enumerate(paragrafos)
+                        ])
+                        
+                        # Análise em cada tab
+                        for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
+                            with tab:
+                                tipo = detectar_tipo_paragrafo(paragrafo, i)
+                                mostrar_analise_paragrafo(paragrafo, tipo)
+            
             # Botões de ação
-            if texto and st.session_state.tema_redacao:
+            if texto and st.session_state.tema_redacao.strip():
+                st.markdown("---")
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("💾 Salvar Rascunho", use_container_width=True):
@@ -2258,12 +2292,22 @@ def main():
                         st.success("Rascunho salvo com sucesso!")
                 
                 with col2:
-                    if st.button("📊 Analisar Redação", type="primary", use_container_width=True):
+                    if st.button("📊 Análise Completa", type="primary", use_container_width=True):
                         with st.spinner("Analisando sua redação..."):
                             resultados = processar_redacao_completa(texto, st.session_state.tema_redacao)
                             st.session_state.resultados = resultados
                             st.session_state.page = 'analise'
                             st.rerun()
+            
+            # Rodapé
+            st.markdown("---")
+            st.markdown(
+                """<div style='text-align: center; opacity: 0.7;'>
+                Desenvolvido para auxiliar estudantes na preparação para o ENEM.
+                Para feedback e sugestões, use o botão de feedback abaixo de cada análise.
+                </div>""",
+                unsafe_allow_html=True
+            )
             
         elif st.session_state.page == 'analise':
             if not st.session_state.resultados:
@@ -2272,16 +2316,7 @@ def main():
                     st.session_state.page = 'editor'
                     st.rerun()
             else:
-                mostrar_analise_completa()  # Função que você já deve ter implementado
-        
-        # Rodapé
-        st.markdown("---")
-        st.markdown(
-            """<div style='text-align: center; color: #666;'>
-            Editor Interativo de Redação ENEM - Desenvolvido para auxiliar estudantes
-            </div>""",
-            unsafe_allow_html=True
-        )
+                mostrar_analise_completa()
         
     except Exception as e:
         logger.error(f"Erro na execução principal: {str(e)}")
