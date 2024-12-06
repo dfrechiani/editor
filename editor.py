@@ -2197,13 +2197,6 @@ def main():
     Função principal da aplicação Streamlit.
     Coordena a interface e o fluxo de análise.
     """
-    try:
-        # Configurações iniciais
-        st.set_page_config(
-            page_title="Editor Interativo de Redação ENEM",
-            layout="wide",
-            initial_sidebar_state="collapsed"
-        )
         
         # Inicialização do estado
         if 'page' not in st.session_state:
