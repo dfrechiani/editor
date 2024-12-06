@@ -2342,6 +2342,272 @@ def criar_grafico_notas(notas: Dict[str, int]):
     # Exibir o gráfico
     st.plotly_chart(fig, use_container_width=True)
 
+def mostrar_analise_paragrafo(texto: str, tipo: str):
+    """
+    Exibe a análise detalhada de um parágrafo específico da redação.
+    Esta função mostra uma análise em tempo real incluindo estrutura,
+    gramática, e sugestões de melhoria.
+    
+    Args:
+        texto: O texto do parágrafo a ser analisado
+        tipo: O tipo do parágrafo (introdução, desenvolvimento1, etc.)
+    """
+    # Identificadores visuais por tipo de parágrafo
+    icones = {
+        "introducao": "🎯",
+        "desenvolvimento1": "💡",
+        "desenvolvimento2": "📚",
+        "conclusao": "✨"
+    }
+    
+    # Títulos por tipo de parágrafo
+    titulos = {
+        "introducao": "Introdução",
+        "desenvolvimento1": "Primeiro Desenvolvimento",
+        "desenvolvimento2": "Segundo Desenvolvimento",
+        "conclusao": "Conclusão"
+    }
+    
+    # Mostra cabeçalho do parágrafo
+    st.markdown(f"### {icones.get(tipo, '📝')} {titulos.get(tipo, tipo.title())}")
+    
+    # Divisão em colunas para layout
+    col_texto, col_metricas = st.columns([2, 1])
+    
+    with col_texto:
+        # Mostra o texto com possíveis marcações
+        st.markdown("#### 📄 Texto do Parágrafo")
+        
+        # Realiza análise do parágrafo
+        analise = analisar_paragrafo_tempo_real(texto, tipo)
+        
+        # Mostra o texto com marcações de erros
+        texto_marcado = marcar_erros_paragrafo(
+            texto,
+            analise.get('erros', [])
+        )
+        
+        st.markdown(
+            f"""<div style='background-color: white;
+                          color: black;
+                          padding: 15px;
+                          border-radius: 5px;
+                          font-family: Arial;
+                          line-height: 1.5;
+                          margin: 10px 0;'>
+                {texto_marcado}
+            </div>""",
+            unsafe_allow_html=True
+        )
+        
+        # Contagem de palavras
+        num_palavras = len(texto.split())
+        st.caption(f"Total de palavras: {num_palavras}")
+    
+    with col_metricas:
+        # Métricas de qualidade
+        score = analise.get('score', 0)
+        cor_score = get_score_color(score)
+        
+        st.metric(
+            "Qualidade Estrutural",
+            f"{int(score * 100)}%",
+            delta=None
+        )
+        
+        # Erros gramaticais
+        num_erros = len(analise.get('erros', []))
+        st.metric(
+            "Erros Identificados",
+            num_erros,
+            delta=f"{'-' if num_erros > 0 else '+'}{num_erros}",
+            delta_color="inverse"
+        )
+    
+    # Feedback e sugestões em tabs
+    tab_estrutura, tab_gramatical, tab_dicas = st.tabs([
+        "📝 Análise Estrutural",
+        "🔍 Correções Gramaticais",
+        "💡 Sugestões"
+    ])
+    
+    with tab_estrutura:
+        if analise.get('feedback_estrutural'):
+            for feedback in analise['feedback_estrutural']:
+                st.markdown(get_feedback_box(feedback), unsafe_allow_html=True)
+        else:
+            st.info("Análise estrutural em processamento...")
+    
+    with tab_gramatical:
+        erros = analise.get('erros', [])
+        if erros:
+            for erro in erros:
+                st.markdown(
+                    f"""<div style='background-color: #262730;
+                                  padding: 10px;
+                                  border-radius: 5px;
+                                  margin: 5px 0;'>
+                        <p><strong>Trecho:</strong> "{erro.get('trecho', '')}"</p>
+                        <p><strong>Erro:</strong> {erro.get('tipo', '')}</p>
+                        <p><strong>Correção:</strong> {erro.get('sugestao', '')}</p>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.success("Não foram encontrados erros gramaticais significativos.")
+    
+    with tab_dicas:
+        dicas = get_dicas_por_tipo(tipo, score)
+        for dica in dicas:
+            st.markdown(
+                f"""<div style='background-color: #1e2a3a;
+                              padding: 10px;
+                              border-radius: 5px;
+                              margin: 5px 0;'>
+                    💡 {dica}
+                </div>""",
+                unsafe_allow_html=True
+            )
+
+def marcar_erros_paragrafo(texto: str, erros: List[Dict[str, str]]) -> str:
+    """
+    Adiciona marcações visuais para erros identificados no texto do parágrafo.
+    
+    Args:
+        texto: Texto original do parágrafo
+        erros: Lista de erros identificados com seus detalhes
+        
+    Returns:
+        Texto com marcações HTML para destacar os erros
+    """
+    texto_marcado = texto
+    
+    # Ordena os erros por posição no texto (do fim para o início)
+    erros_ordenados = sorted(
+        [(erro['trecho'], erro.get('sugestao', ''), texto.find(erro['trecho']))
+         for erro in erros if 'trecho' in erro],
+        key=lambda x: x[2],
+        reverse=True
+    )
+    
+    # Aplica as marcações
+    for trecho, sugestao, posicao in erros_ordenados:
+        if posicao != -1:
+            marcacao = f'''<span style="background-color: rgba(255,100,100,0.2);
+                                     border-bottom: 2px dashed #ff6b6b;
+                                     cursor: help;"
+                          title="Sugestão: {sugestao}">{trecho}</span>'''
+            texto_marcado = (
+                texto_marcado[:posicao] +
+                marcacao +
+                texto_marcado[posicao + len(trecho):]
+            )
+    
+    return texto_marcado
+
+def get_score_color(score: float) -> str:
+    """
+    Determina a cor apropriada baseada no score.
+    
+    Args:
+        score: Valor entre 0 e 1 representando a qualidade
+        
+    Returns:
+        String com código de cor
+    """
+    if score >= 0.8:
+        return "#28a745"  # Verde
+    elif score >= 0.5:
+        return "#ffc107"  # Amarelo
+    else:
+        return "#dc3545"  # Vermelho
+
+def get_feedback_box(feedback: str) -> str:
+    """
+    Gera HTML estilizado para exibição de feedback.
+    
+    Args:
+        feedback: String contendo o feedback
+        
+    Returns:
+        String com HTML estilizado
+    """
+    if feedback.startswith("✅"):
+        bg_color = "#1a472a"
+        border_color = "#2ecc71"
+    elif feedback.startswith("❌"):
+        bg_color = "#4a1919"
+        border_color = "#e74c3c"
+    elif feedback.startswith("💡"):
+        bg_color = "#2c3e50"
+        border_color = "#3498db"
+    else:
+        bg_color = "#2C3D4F"
+        border_color = "#95a5a6"
+    
+    return f"""
+        <div style='
+            background-color: {bg_color};
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 4px solid {border_color};
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        '>
+            <p style='
+                color: #FFFFFF;
+                margin: 0;
+                font-size: 15px;
+                line-height: 1.5;
+            '>
+                {feedback}
+            </p>
+        </div>
+    """
+
+def get_dicas_por_tipo(tipo: str, score: float) -> List[str]:
+    """
+    Retorna dicas específicas baseadas no tipo do parágrafo e score.
+    
+    Args:
+        tipo: Tipo do parágrafo
+        score: Score de qualidade (0 a 1)
+        
+    Returns:
+        Lista de dicas
+    """
+    dicas_base = {
+        "introducao": [
+            "Apresente o tema de forma gradual, partindo do geral para o específico",
+            "Inclua uma tese clara e bem definida ao final",
+            "Use dados ou fatos relevantes para contextualizar o tema"
+        ],
+        "desenvolvimento1": [
+            "Desenvolva um argumento principal forte logo no início",
+            "Use exemplos concretos para sustentar seu ponto de vista",
+            "Mantenha o foco na tese apresentada na introdução"
+        ],
+        "desenvolvimento2": [
+            "Apresente um novo aspecto do tema, complementar ao primeiro desenvolvimento",
+            "Estabeleça conexões claras com os argumentos anteriores",
+            "Utilize repertório sociocultural relevante"
+        ],
+        "conclusao": [
+            "Retome os principais pontos discutidos de forma sintética",
+            "Proponha soluções viáveis e bem estruturadas",
+            "Especifique agentes, ações e meios para implementação"
+        ]
+    }
+    
+    # Adiciona dicas baseadas no score
+    dicas = dicas_base.get(tipo, [])
+    if score < 0.5:
+        dicas.append("⚠️ Reforce a estrutura básica do parágrafo")
+    elif score < 0.8:
+        dicas.append("📈 Adicione mais elementos de conexão entre as ideias")
+    
+    return dicas
+
 def main():
     """
     Função principal da aplicação Streamlit.
