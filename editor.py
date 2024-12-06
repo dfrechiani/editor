@@ -1353,26 +1353,38 @@ def marcar_erros_por_competencia(texto: str, erros_especificos: dict, competenci
     return texto_marcado, len(erros_comp)
 
 
+def initialize_empty_results():
+    """
+    Creates a properly structured empty results dictionary.
+    This ensures we always have a valid results structure.
+    """
+    return {
+        'notas': {comp: 0 for comp in competencies.keys()},
+        'erros_especificos': {comp: [] for comp in competencies.keys()},
+        'analises_detalhadas': {comp: "" for comp in competencies.keys()},
+        'nota_total': 0
+    }
+
 def main():
     """
     Função principal do aplicativo, controlando a navegação e funcionalidades.
     Inclui gestão de estado, navegação entre páginas, e tratamento de erros.
     """
     try:
-        # Inicialização do estado global
+        # Inicialização do estado global com valores padrão seguros
         if 'page' not in st.session_state:
             st.session_state.page = 'editor'
+        
         if 'tema_redacao' not in st.session_state:
-            st.session_state.tema_redacao = ""  # Inicializa vazio para forçar o usuário a definir
+            st.session_state.tema_redacao = ""
+        
         if 'redacao_texto' not in st.session_state:
             st.session_state.redacao_texto = ""
-        if 'resultados' not in st.session_state:
-            st.session_state.resultados = {
-                'notas': {comp: 0 for comp in competencies.keys()},
-                'erros_especificos': {comp: [] for comp in competencies.keys()},
-                'analises_detalhadas': {comp: "" for comp in competencies.keys()},
-                'nota_total': 0
-            }
+        
+        # Sempre garante que resultados tem uma estrutura válida
+        if 'resultados' not in st.session_state or st.session_state.resultados is None:
+            st.session_state.resultados = initialize_empty_results()
+        
         if 'historico_analises' not in st.session_state:
             st.session_state.historico_analises = []
 
@@ -1403,12 +1415,7 @@ def main():
                 if tema_atual != st.session_state.tema_redacao:
                     st.session_state.tema_redacao = tema_atual
                     # Reseta resultados quando o tema muda
-                    st.session_state.resultados = {
-                        'notas': {comp: 0 for comp in competencies.keys()},
-                        'erros_especificos': {comp: [] for comp in competencies.keys()},
-                        'analises_detalhadas': {comp: "" for comp in competencies.keys()},
-                        'nota_total': 0
-                    }
+                    st.session_state.resultados = initialize_empty_results()
             
             with col_ajuda:
                 with st.expander("ℹ️ Dicas para o tema"):
@@ -1417,28 +1424,7 @@ def main():
                         - Permite análise contextualizada
                         - Melhora as sugestões de argumentos
                         - Ajuda na avaliação da aderência ao tema
-                        
-                        **Como inserir:**
-                        1. Cole o tema exato da proposta
-                        2. Mantenha a formatação original
-                        3. Inclua palavras-chave relevantes
                     """)
-            
-            # Validação do tema
-            if not st.session_state.tema_redacao.strip():
-                st.warning("⚠️ Por favor, insira o tema da redação antes de começar a escrever.")
-            
-            # Linha divisória visual
-            st.markdown("---")
-            
-            # Instruções principais
-            st.markdown("""
-                ### ✍️ Como usar o editor:
-                1. Digite o tema da redação acima
-                2. Escreva seu texto no editor abaixo
-                3. Separe os parágrafos com uma linha em branco
-                4. Receba feedback instantâneo sobre cada parágrafo
-            """)
             
             # Editor principal
             texto = st.text_area(
@@ -1447,7 +1433,7 @@ def main():
                 key="editor_redacao",
                 help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco.",
                 value=st.session_state.redacao_texto,
-                disabled=not st.session_state.tema_redacao.strip()  # Desabilita se não houver tema
+                disabled=not st.session_state.tema_redacao.strip()
             )
             
             # Se o editor estiver desabilitado, mostra mensagem explicativa
@@ -1457,45 +1443,87 @@ def main():
             # Atualiza o estado quando o texto muda
             if texto != st.session_state.redacao_texto:
                 st.session_state.redacao_texto = texto
-                st.session_state.resultados = None  # Reseta resultados anteriores
+                # Ao invés de definir como None, inicializa com estrutura vazia
+                st.session_state.resultados = initialize_empty_results()
             
-            # Resto do código do editor continua aqui...
-            # (Previous implementation continues here)
-
-            # Sidebar com configurações adicionais
-            with st.sidebar:
-                st.markdown("### ⚙️ Configurações Avançadas")
-                with st.expander("Opções de Análise"):
-                    st.checkbox(
-                        "Ativar análise gramatical em tempo real",
-                        value=True,
-                        key="analise_gramatical_real_time"
-                    )
-                    st.checkbox(
-                        "Mostrar sugestões detalhadas",
-                        value=True,
-                        key="mostrar_sugestoes_detalhadas"
-                    )
-                
-                # Histórico de temas (se implementado)
-                with st.expander("Temas Anteriores"):
-                    st.markdown("Em desenvolvimento...")
-
+            if texto and st.session_state.tema_redacao.strip():
+                with st.spinner("📊 Analisando sua redação..."):
+                    paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
+                    
+                    if paragrafos:
+                        # Sistema de tabs para análise de parágrafos
+                        tabs = st.tabs([
+                            f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
+                            for i, p in enumerate(paragrafos)
+                        ])
+                        
+                        # Análise em cada tab
+                        analises_paragrafos = []
+                        for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
+                            with tab:
+                                tipo = detectar_tipo_paragrafo(paragrafo, i)
+                                
+                                # Adiciona identificador visual do tipo de parágrafo
+                                icones = {
+                                    "introducao": "🎯",
+                                    "desenvolvimento1": "💡",
+                                    "desenvolvimento2": "📚",
+                                    "conclusao": "✨"
+                                }
+                                st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
+                                
+                                # Análise do parágrafo
+                                analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
+                                mostrar_analise_tempo_real(analise)
+                                analises_paragrafos.append(analise)
+                        
+                        # Armazena análises no histórico
+                        st.session_state.historico_analises = analises_paragrafos
+                        
+                        # Atualiza resultados com base nas análises
+                        resultados_atualizados = initialize_empty_results()
+                        # Aqui você pode adicionar lógica para preencher resultados_atualizados
+                        # baseado nas análises dos parágrafos
+                        st.session_state.resultados = resultados_atualizados
+            
+            # Botões de ação
+            if texto and st.session_state.tema_redacao.strip():
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Salvar Rascunho", use_container_width=True):
+                        st.session_state.ultimo_rascunho = texto
+                        st.success("Rascunho salvo com sucesso!")
+                        
+                with col2:
+                    if st.button("📊 Análise Completa", type="primary", use_container_width=True):
+                        # Garante que temos resultados válidos antes de mudar de página
+                        if st.session_state.resultados is None:
+                            st.session_state.resultados = initialize_empty_results()
+                        st.session_state.page = 'analise'
+                        st.rerun()
+            
         elif st.session_state.page == 'analise':
+            # Garante que temos resultados válidos antes de mostrar a análise
+            if st.session_state.resultados is None:
+                st.session_state.resultados = initialize_empty_results()
             pagina_analise()
             
     except Exception as e:
         logger.error(f"Erro na execução principal: {e}")
         st.error(
-            """Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte.
+            f"""Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte.
             
             Detalhes técnicos: {str(e)}"""
         )
         
-        # Botão de recuperação
+        # Botão de recuperação com reinicialização segura
         if st.button("🔄 Reiniciar Aplicativo"):
-            for key in st.session_state.keys():
-                del st.session_state[key]
+            # Reinicializa com valores padrão seguros
+            st.session_state.page = 'editor'
+            st.session_state.tema_redacao = ""
+            st.session_state.redacao_texto = ""
+            st.session_state.resultados = initialize_empty_results()
+            st.session_state.historico_analises = []
             st.rerun()
 
 if __name__ == "__main__":
