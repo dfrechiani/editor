@@ -1532,78 +1532,7 @@ def pagina_analise():
             st.session_state.page = 'trilhas'
             st.rerun()
 
-def criar_grafico_barras(notas: Dict[str, int]):
-    """
-    Cria um gráfico de barras interativo mostrando as notas por competência.
-    Esta função agora usa o plotly.graph_objects para criar uma visualização mais detalhada e interativa.
-    
-    Args:
-        notas (Dict[str, int]): Dicionário com as notas por competência
-    """
-    # Definir cores para cada competência para melhor visualização
-    cores_competencias = {
-        'comp1': '#FF6B6B',  # Vermelho suave
-        'comp2': '#4ECDC4',  # Turquesa
-        'comp3': '#45B7D1',  # Azul claro
-        'comp4': '#96CEB4',  # Verde suave
-        'comp5': '#FFEEAD'   # Amarelo suave
-    }
-    
-    # Criar o gráfico de barras
-    fig = go.Figure(data=[
-        go.Bar(
-            x=list(competencies.values()),
-            y=[notas[comp] for comp in competencies.keys()],
-            marker_color=[cores_competencias[comp] for comp in competencies.keys()],
-            text=[notas[comp] for comp in competencies.keys()],
-            textposition='auto',
-        )
-    ])
-    
-    # Personalizar o layout do gráfico
-    fig.update_layout(
-        title={
-            'text': 'Notas por Competência',
-            'y':0.95,
-            'x':0.5,
-            'xanchor': 'center',
-            'yanchor': 'top'
-        },
-        xaxis_title="Competência",
-        yaxis_title="Pontuação",
-        yaxis_range=[0, 200],
-        showlegend=False,
-        plot_bgcolor='rgba(255,255,255,0.9)',
-        paper_bgcolor='rgba(255,255,255,0.9)',
-        font=dict(
-            family="Arial, sans-serif",
-            size=12,
-            color="#2C3E50"
-        ),
-        margin=dict(l=50, r=50, t=70, b=50)
-    )
-    
-    # Adicionar linhas de grade para melhor legibilidade
-    fig.update_yaxes(
-        gridcolor='rgba(0,0,0,0.1)',
-        gridwidth=1,
-        zeroline=True,
-        zerolinecolor='rgba(0,0,0,0.2)',
-        zerolinewidth=1
-    )
-    
-    # Personalizar as barras
-    fig.update_traces(
-        texttemplate='%{text}',  # Mostra o valor exato
-        textposition='outside',   # Coloca o texto acima das barras
-        hovertemplate='<b>%{x}</b><br>Nota: %{y}<extra></extra>',  # Formato do hover
-        marker=dict(
-            line=dict(width=1, color='rgba(0,0,0,0.3)')  # Borda das barras
-        )
-    )
-    
-    # Exibir o gráfico no Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+
 
 def mostrar_radar_competencias(notas: Dict[str, int]):
     """
@@ -2190,7 +2119,228 @@ def extrair_erros_do_resultado(resultado: str) -> List[Dict[str, str]]:
     
     return erros
     
+def mostrar_analise_completa():
+    """
+    Exibe a análise completa da redação usando componentes Streamlit.
+    Organiza a visualização em seções claras para cada competência e métricas gerais.
+    """
+    # Título e introdução
+    st.title("📊 Análise Detalhada da Redação")
+    
+    # Verificação de dados
+    if 'resultados' not in st.session_state or not st.session_state.resultados:
+        st.warning("Nenhuma análise disponível. Por favor, submeta uma redação.")
+        if st.button("← Voltar ao Editor"):
+            st.session_state.page = 'editor'
+            st.rerun()
+        return
 
+    resultados = st.session_state.resultados
+    
+    # Layout em duas colunas principais
+    col_texto, col_notas = st.columns([2, 1])
+    
+    with col_texto:
+        st.subheader("Texto Analisado")
+        st.write(f"**Tema:** {st.session_state.tema_redacao}")
+        st.markdown("""---""")
+        
+        # Mostrar texto com análise por competência selecionada
+        competencia_selecionada = st.selectbox(
+            "Visualizar marcações por competência:",
+            options=[
+                "Competência 1 - Domínio da norma culta",
+                "Competência 2 - Compreensão do tema",
+                "Competência 3 - Seleção de argumentos",
+                "Competência 4 - Mecanismos linguísticos",
+                "Competência 5 - Proposta de intervenção"
+            ]
+        )
+        
+        # Mapeamento de competências
+        comp_map = {
+            "Competência 1 - Domínio da norma culta": "comp1",
+            "Competência 2 - Compreensão do tema": "comp2",
+            "Competência 3 - Seleção de argumentos": "comp3",
+            "Competência 4 - Mecanismos linguísticos": "comp4",
+            "Competência 5 - Proposta de intervenção": "comp5"
+        }
+        
+        comp_id = comp_map[competencia_selecionada]
+        
+        # Exibir texto com marcações da competência selecionada
+        texto_marcado = marcar_erros_no_texto(
+            resultados['texto_original'],
+            resultados['erros_especificos'].get(comp_id, [])
+        )
+        
+        st.markdown(
+            f"""<div style='background-color: white; 
+                          color: black; 
+                          padding: 20px; 
+                          border-radius: 5px;
+                          font-family: Arial;
+                          margin: 10px 0;'>
+                {texto_marcado}
+            </div>""",
+            unsafe_allow_html=True
+        )
+    
+    with col_notas:
+        st.subheader("Notas por Competência")
+        
+        # Nota total
+        st.metric(
+            "Nota Total",
+            f"{resultados['nota_total']}/1000",
+            delta=None
+        )
+        
+        # Gráfico de notas
+        criar_grafico_notas(resultados['notas'])
+        
+        # Média por competência
+        media = resultados['nota_total'] / 5
+        st.metric(
+            "Média por Competência",
+            f"{media:.1f}/200"
+        )
+    
+    # Análise detalhada por competência em tabs
+    st.markdown("""---""")
+    st.subheader("Análise Detalhada por Competência")
+    
+    tabs = st.tabs([
+        "Competência 1",
+        "Competência 2",
+        "Competência 3",
+        "Competência 4",
+        "Competência 5"
+    ])
+    
+    for i, (tab, comp_id) in enumerate(zip(tabs, ['comp1', 'comp2', 'comp3', 'comp4', 'comp5']), 1):
+        with tab:
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                # Análise detalhada
+                st.markdown("### 📝 Análise")
+                st.markdown(resultados['analises_detalhadas'].get(comp_id, ""))
+                
+                # Erros encontrados
+                erros = resultados['erros_especificos'].get(comp_id, [])
+                if erros:
+                    st.markdown("### ⚠️ Problemas Identificados")
+                    for erro in erros:
+                        st.markdown(
+                            f"""<div style='background-color: #262730;
+                                          padding: 10px;
+                                          border-radius: 5px;
+                                          margin: 5px 0;'>
+                                <p><strong>Trecho:</strong> "{erro.get('trecho', '')}"</p>
+                                <p><strong>Explicação:</strong> {erro.get('explicação', '')}</p>
+                                <p><strong>Sugestão:</strong> {erro.get('sugestão', '')}</p>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.success("Não foram encontrados problemas significativos.")
+            
+            with col2:
+                # Nota e justificativa
+                st.metric(
+                    f"Nota Comp. {i}",
+                    f"{resultados['notas'].get(comp_id, 0)}/200"
+                )
+                
+                with st.expander("Ver Justificativa"):
+                    st.write(resultados['justificativas'].get(comp_id, ""))
+    
+    # Botões de navegação
+    st.markdown("""---""")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("← Voltar ao Editor"):
+            st.session_state.page = 'editor'
+            st.rerun()
+    with col2:
+        if st.button("Ver Sugestões de Melhoria →"):
+            st.session_state.page = 'sugestoes'
+            st.rerun()
+
+def marcar_erros_no_texto(texto: str, erros: List[Dict[str, str]]) -> str:
+    """
+    Marca os erros no texto com highlighting e tooltips.
+    
+    Args:
+        texto: Texto original da redação
+        erros: Lista de dicionários contendo os erros identificados
+        
+    Returns:
+        Texto com marcações HTML para os erros
+    """
+    texto_marcado = texto
+    
+    # Ordena os erros por posição no texto (do fim para o início para não afetar os índices)
+    erros_ordenados = sorted(
+        [(erro['trecho'], erro.get('explicação', ''), texto.find(erro['trecho']))
+         for erro in erros if 'trecho' in erro],
+        key=lambda x: x[2],
+        reverse=True
+    )
+    
+    # Aplica as marcações
+    for trecho, explicacao, posicao in erros_ordenados:
+        if posicao != -1:
+            marcacao = f'''<span style="background-color: rgba(255,100,100,0.2); 
+                                     border-bottom: 2px dashed #ff6b6b;
+                                     cursor: help;" 
+                          title="{explicacao}">{trecho}</span>'''
+            texto_marcado = (
+                texto_marcado[:posicao] +
+                marcacao +
+                texto_marcado[posicao + len(trecho):]
+            )
+    
+    return texto_marcado
+
+def criar_grafico_notas(notas: Dict[str, int]):
+    """
+    Cria um gráfico de barras mostrando as notas por competência.
+    
+    Args:
+        notas: Dicionário com as notas por competência
+    """
+    # Cores para cada competência
+    cores = {
+        'comp1': '#FF6B6B',  # Vermelho suave
+        'comp2': '#4ECDC4',  # Turquesa
+        'comp3': '#45B7D1',  # Azul claro
+        'comp4': '#96CEB4',  # Verde suave
+        'comp5': '#FFEEAD'   # Amarelo suave
+    }
+    
+    # Criar o gráfico
+    fig = go.Figure(data=[
+        go.Bar(
+            x=[f"Comp. {i}" for i in range(1, 6)],
+            y=[notas.get(f'comp{i}', 0) for i in range(1, 6)],
+            marker_color=list(cores.values())
+        )
+    ])
+    
+    # Atualizar layout
+    fig.update_layout(
+        title="Notas por Competência",
+        yaxis_title="Pontuação",
+        yaxis_range=[0, 200],
+        showlegend=False,
+        height=300,
+        margin=dict(t=30, b=0, l=0, r=0)
+    )
+    
+    # Exibir o gráfico
+    st.plotly_chart(fig, use_container_width=True)
 
 def main():
     """
