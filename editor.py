@@ -1199,98 +1199,110 @@ def aplicar_estilos():
 
 def pagina_analise():
     """
-    Página de análise do código da aplicação de análise de redações do ENEM.
+    Exibe a análise detalhada da redação usando as competências do ENEM.
     """
-    st.title("🔍 Análise do Sistema de Avaliação de Redações ENEM")
+    st.title("Análise da Redação")
 
-    tabs = st.tabs([
-        "Competências & Análise",
-        "Estrutura de Avaliação",
-        "Integração OpenAI",
-        "Interface & Feedback"
+    # Verificar se temos os dados necessários
+    if 'redacao_texto' not in st.session_state or 'resultados' not in st.session_state:
+        st.warning("Por favor, submeta uma redação primeiro para análise.")
+        if st.button("Ir para Editor de Redação"):
+            st.session_state.page = 'editor'
+            st.rerun()
+        return
+
+    # Recuperar dados da sessão
+    redacao_texto = st.session_state.redacao_texto
+    resultados = st.session_state.resultados
+    tema_redacao = st.session_state.tema_redacao
+
+    # Layout principal
+    col1, col2 = st.columns([2,1])
+
+    with col1:
+        st.subheader("Texto da Redação:")
+        st.write(f"**Tema:** {tema_redacao}")
+        
+        # Mostrar redação com erros destacados
+        competencia_selecionada = st.selectbox(
+            "Visualizar erros por competência:",
+            list(competencies.keys()),
+            format_func=lambda x: competencies[x]
+        )
+        
+        texto_marcado, _ = marcar_erros_por_competencia(
+            redacao_texto,
+            resultados['erros_especificos'],
+            competencia_selecionada
+        )
+        st.markdown(texto_marcado, unsafe_allow_html=True)
+
+    with col2:
+        st.subheader("Análise por Competência")
+        for comp, desc in competencies.items():
+            with st.expander(f"{desc} - {resultados['notas'][comp]}/200"):
+                erros = resultados['erros_especificos'][comp]
+                if erros:
+                    st.write("**Erros encontrados:**")
+                    for erro in erros:
+                        st.markdown(f"""
+                        - **Trecho:** {erro['trecho']}
+                        - **Explicação:** {erro['explicação']}
+                        - **Sugestão:** {erro['sugestão']}
+                        ---
+                        """)
+                else:
+                    st.success("Não foram encontrados erros nesta competência!")
+                
+                st.write("**Análise Detalhada:**")
+                st.write(resultados['analises_detalhadas'][comp])
+
+    # Visualização das notas
+    st.subheader("Desempenho Geral")
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        # Gráfico de barras das notas
+        criar_grafico_barras(resultados['notas'])
+    
+    with col2:
+        # Nota total e médias
+        st.metric("Nota Total", f"{resultados['nota_total']}/1000")
+        media = resultados['nota_total']/5
+        st.metric("Média por Competência", f"{media:.1f}/200")
+    
+    # Botões de navegação
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("← Voltar ao Editor"):
+            st.session_state.page = 'editor'
+            st.rerun()
+    with col2:
+        if st.button("Ver Trilhas de Aprendizado →"):
+            st.session_state.page = 'trilhas'
+            st.rerun()
+
+def criar_grafico_barras(notas: Dict[str, int]):
+    """
+    Cria um gráfico de barras mostrando as notas por competência.
+    """
+    fig = go.Figure(data=[
+        go.Bar(
+            x=list(competencies.values()),
+            y=[notas[comp] for comp in competencies.keys()],
+            marker_color=[competency_colors[comp] for comp in competencies.keys()]
+        )
     ])
-
-    with tabs[0]:
-        st.header("Competências do ENEM e Análise")
-        st.markdown("""
-        ### 📋 Competências Avaliadas:
-        """)
-        
-        competencias = {
-            "competency1": "Domínio da Norma Culta",
-            "competency2": "Compreensão do Tema",
-            "competency3": "Seleção e Organização das Informações",
-            "competency4": "Conhecimento dos Mecanismos Linguísticos",
-            "competency5": "Proposta de Intervenção"
-        }
-
-        for comp, desc in competencias.items():
-            with st.expander(f"Competência {comp[-1]}: {desc}"):
-                st.markdown(f"""
-                #### Principais Aspectos Analisados:
-                - **Métodos de Análise**: `analisar_{comp}()`
-                - **Atribuição de Nota**: `atribuir_nota_{comp}()`
-                - **Validação de Erros**: `revisar_erros_{comp}()`
-                """)
-
-    with tabs[1]:
-        st.header("Estrutura de Avaliação")
-        st.markdown("""
-        ### 🔄 Fluxo de Processamento:
-        1. **Recebimento do Texto**
-           - Divisão em parágrafos
-           - Identificação de tipos de parágrafo
-        
-        2. **Análise por Competência**
-           - Validação técnica
-           - Análise com IA
-           - Combinação de análises
-        
-        3. **Geração de Feedback**
-           - Identificação de erros
-           - Sugestões de melhoria
-           - Pontuação detalhada
-        """)
-
-    with tabs[2]:
-        st.header("Integração com IA")
-        st.markdown("""
-        ### 🤖 Uso do GPT-3.5 Turbo
-        - **Modelo Base**: `gpt-3.5-turbo-1106`
-        - **Fine-tuning**: Modelos específicos por competência
-        - **Prompts Estruturados**: Análise técnica e pedagógica
-        
-        #### Exemplos de Modelos Fine-tuned:
-        ```python
-        MODELO_COMP1 = "ft:gpt-4o-2024-08-06:personal:competencia-1:AHDQQucG"
-        MODELO_COMP2 = "ft:gpt-4o-2024-08-06:personal:competencia-2:AHDT84HO"
-        MODELO_COMP3 = "ft:gpt-4o-2024-08-06:personal:competencia-3:AHDUfZRb"
-        MODELO_COMP4 = "ft:gpt-4o-2024-08-06:personal:competencia-4:AHDXewU3"
-        MODELO_COMP5 = "ft:gpt-4o-2024-08-06:personal:competencia-5:AHGVPnJG"
-        ```
-        """)
-
-    with tabs[3]:
-        st.header("Interface e Feedback")
-        st.markdown("""
-        ### 💡 Sistema de Feedback
-        - **Análise em Tempo Real**
-        - **Feedback Visual**
-           - Marcação de erros no texto
-           - Gráficos de desempenho
-           - Sugestões contextualizadas
-        
-        ### 📊 Visualizações
-        - Gráfico de radar de competências
-        - Barras de progresso
-        - Marcadores de erro interativos
-        """)
-
-    # Botão para voltar ao editor
-    st.markdown("---")
-    if st.button("← Voltar ao Editor de Redação", type="primary"):
-        st.session_state.page = 'editor'
-        st.rerun()
+    
+    fig.update_layout(
+        title="Notas por Competência",
+        xaxis_title="Competência",
+        yaxis_title="Pontuação",
+        yaxis_range=[0, 200],
+        showlegend=False
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 def main():
     """
