@@ -1219,6 +1219,233 @@ def aplicar_estilos():
         </style>
     """, unsafe_allow_html=True)
 
+def processar_redacao_completa(redacao_texto: str, tema_redacao: str) -> Dict[str, Any]:
+    """
+    Função principal que coordena toda a análise da redação.
+    
+    Args:
+        redacao_texto: Texto completo da redação
+        tema_redacao: Tema proposto para a redação
+        
+    Returns:
+        Dict contendo todos os resultados da análise
+    """
+    try:
+        logger.info("Iniciando processamento da redação")
+        
+        # Inicializa estrutura de resultados
+        resultados = {
+            'analises_detalhadas': {},
+            'notas': {},
+            'nota_total': 0,
+            'erros_especificos': {},
+            'justificativas': {},
+            'total_erros_por_competencia': {},
+            'texto_original': redacao_texto,
+            'tema_redacao': tema_redacao
+        }
+        
+        # Análise Coh-Metrix
+        cohmetrix_results = analisar_cohmetrix(redacao_texto)
+        resultados['metricas_textuais'] = cohmetrix_results
+        
+        # Análise por competência
+        competencias = {
+            'comp1': (analisar_competency1, atribuir_nota_competency1),
+            'comp2': (analisar_competency2, atribuir_nota_competency2),
+            'comp3': (analisar_competency3, atribuir_nota_competency3),
+            'comp4': (analisar_competency4, atribuir_nota_competency4),
+            'comp5': (analisar_competency5, atribuir_nota_competency5)
+        }
+        
+        # Processa cada competência
+        for comp_id, (func_analise, func_nota) in competencias.items():
+            logger.info(f"Analisando competência {comp_id}")
+            
+            try:
+                # Realiza análise da competência
+                resultado_analise = func_analise(
+                    redacao_texto,
+                    tema_redacao,
+                    cohmetrix_results
+                )
+                
+                # Atribui nota com base na análise
+                resultado_nota = func_nota(
+                    resultado_analise['analise'],
+                    resultado_analise['erros']
+                )
+                
+                # Armazena resultados
+                resultados['analises_detalhadas'][comp_id] = resultado_analise['analise']
+                resultados['notas'][comp_id] = resultado_nota['nota']
+                resultados['justificativas'][comp_id] = resultado_nota['justificativa']
+                resultados['erros_especificos'][comp_id] = resultado_analise['erros']
+                resultados['total_erros_por_competencia'][comp_id] = len(resultado_analise['erros'])
+                
+            except Exception as e:
+                logger.error(f"Erro ao processar competência {comp_id}: {str(e)}")
+                # Em caso de erro, atribui valores padrão
+                resultados['analises_detalhadas'][comp_id] = "Erro na análise"
+                resultados['notas'][comp_id] = 0
+                resultados['justificativas'][comp_id] = f"Erro ao analisar: {str(e)}"
+                resultados['erros_especificos'][comp_id] = []
+                resultados['total_erros_por_competencia'][comp_id] = 0
+        
+        # Calcula nota total
+        resultados['nota_total'] = sum(resultados['notas'].values())
+        
+        # Adiciona informações adicionais
+        resultados['timestamp'] = datetime.now().isoformat()
+        resultados['status'] = 'sucesso'
+        
+        # Salva no session_state do Streamlit
+        st.session_state.analise_realizada = True
+        st.session_state.resultados = resultados
+        st.session_state.redacao_texto = redacao_texto
+        st.session_state.tema_redacao = tema_redacao
+        
+        logger.info("Processamento concluído com sucesso")
+        return resultados
+        
+    except Exception as e:
+        logger.error(f"Erro no processamento da redação: {str(e)}")
+        
+        # Retorna resultado de erro
+        erro_result = {
+            'status': 'erro',
+            'mensagem': f"Erro ao processar redação: {str(e)}",
+            'timestamp': datetime.now().isoformat(),
+            'notas': {comp: 0 for comp in ['comp1', 'comp2', 'comp3', 'comp4', 'comp5']},
+            'nota_total': 0,
+            'analises_detalhadas': {},
+            'erros_especificos': {},
+            'texto_original': redacao_texto,
+            'tema_redacao': tema_redacao
+        }
+        
+        return erro_result
+
+
+def analisar_cohmetrix(texto: str) -> Dict[str, int]:
+    """
+    Realiza análise detalhada do texto usando métricas inspiradas no Coh-Metrix.
+    Esta função fornece métricas textuais essenciais para a análise de redações do ENEM.
+    
+    Args:
+        texto: O texto da redação a ser analisado
+        
+    Returns:
+        Dict com métricas textuais detalhadas incluindo:
+        - Contagens básicas (palavras, sentenças, parágrafos)
+        - Análise léxica (diversidade, densidade)
+        - Análise sintática (estruturas frasais)
+        - Análise de coesão (conectivos, referências)
+    """
+    # Verifica se o texto está vazio
+    if not texto or not texto.strip():
+        return {
+            "Word Count": 0,
+            "Sentence Count": 0,
+            "Paragraph Count": 0,
+            "Unique Words": 0,
+            "Lexical Diversity": 0,
+            "Words per Sentence": 0,
+            "Sentences per Paragraph": 0,
+            "Connectives": 0,
+            "Noun Phrases": 0,
+            "Verb Phrases": 0
+        }
+
+    try:
+        # Processamento básico do texto
+        doc = nlp(texto)
+        
+        # Divisão em unidades básicas
+        paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
+        sentencas = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+        palavras = [token.text.lower() for token in doc 
+                   if not token.is_punct and not token.is_space]
+        
+        # Contagens básicas
+        num_paragrafos = len(paragrafos)
+        num_sentencas = len(sentencas)
+        num_palavras = len(palavras)
+        palavras_unicas = len(set(palavras))
+        
+        # Cálculos de médias
+        palavras_por_sentenca = round(num_palavras / num_sentencas, 2) if num_sentencas > 0 else 0
+        sentencas_por_paragrafo = round(num_sentencas / num_paragrafos, 2) if num_paragrafos > 0 else 0
+        
+        # Análise léxica
+        diversidade_lexical = round(palavras_unicas / num_palavras * 100, 2) if num_palavras > 0 else 0
+        
+        # Análise de frases nominais e verbais
+        frases_nominais = len(list(doc.noun_chunks))
+        frases_verbais = sum(1 for token in doc if token.pos_ == 'VERB' 
+                           and any(child.dep_ in ['nsubj', 'obj'] for child in token.children))
+        
+        # Análise de conectivos
+        conectivos = sum(1 for token in doc if token.pos_ == 'CCONJ' 
+                        or token.dep_ == 'mark' 
+                        or token.text.lower() in ['portanto', 'assim', 'então', 'logo', 
+                                                'porque', 'pois', 'já que', 'uma vez que'])
+        
+        # Montagem do dicionário de resultados
+        resultados = {
+            "Word Count": num_palavras,
+            "Sentence Count": num_sentencas,
+            "Paragraph Count": num_paragrafos,
+            "Unique Words": palavras_unicas,
+            "Lexical Diversity": diversidade_lexical,
+            "Words per Sentence": palavras_por_sentenca,
+            "Sentences per Paragraph": sentencas_por_paragrafo,
+            "Connectives": conectivos,
+            "Noun Phrases": frases_nominais,
+            "Verb Phrases": frases_verbais,
+            
+            # Métricas adicionais úteis para análise do ENEM
+            "Average Word Length": round(sum(len(word) for word in palavras) / num_palavras, 2) if num_palavras > 0 else 0,
+            "Content Words": sum(1 for token in doc if token.pos_ in ['NOUN', 'VERB', 'ADJ', 'ADV']),
+            "Function Words": sum(1 for token in doc if token.pos_ in ['ADP', 'DET', 'PRON']),
+            "Complex Sentences": sum(1 for sent in doc.sents 
+                                  if any(token.dep_ in ['ccomp', 'xcomp', 'advcl'] 
+                                        for token in sent)),
+            "References": sum(1 for token in doc if token.pos_ == 'PRON' 
+                            or (token.pos_ == 'DET' and token.dep_ == 'det')),
+        }
+        
+        # Adiciona análise de tempos verbais (importante para textos dissertativos)
+        tempos_verbais = Counter(token.morph.get("Tense", [""])[0] 
+                               for token in doc if token.pos_ == "VERB")
+        resultados.update({
+            "Present Tense": tempos_verbais.get("Pres", 0),
+            "Past Tense": tempos_verbais.get("Past", 0),
+            "Future Tense": tempos_verbais.get("Fut", 0)
+        })
+        
+        # Calcula densidade lexical
+        palavras_conteudo = resultados["Content Words"]
+        palavras_total = num_palavras
+        resultados["Lexical Density"] = round(palavras_conteudo / palavras_total * 100, 2) if palavras_total > 0 else 0
+        
+        return resultados
+        
+    except Exception as e:
+        logger.error(f"Erro na análise Coh-Metrix: {str(e)}")
+        # Retorna valores padrão em caso de erro
+        return {
+            "Word Count": len(texto.split()),
+            "Sentence Count": len([s for s in texto.split('.') if s.strip()]),
+            "Paragraph Count": len([p for p in texto.split('\n\n') if p.strip()]),
+            "Unique Words": len(set(texto.split())),
+            "Lexical Diversity": 0,
+            "Words per Sentence": 0,
+            "Sentences per Paragraph": 0,
+            "Connectives": 0,
+            "Noun Phrases": 0,
+            "Verb Phrases": 0
+        }
 
 def pagina_analise():
     """
@@ -1462,165 +1689,619 @@ def initialize_empty_results():
         'nota_total': 0
     }
 
-def main():
+
+# Funções de análise e atribuição de notas para redações ENEM
+
+def generate_response(prompt: str, competency_type: str, temperature: float = 0.3) -> str:
     """
-    Função principal do aplicativo, controlando a navegação e funcionalidades.
-    Inclui gestão de estado, navegação entre páginas, e tratamento de erros.
+    Gera resposta especializada para análise de redações usando GPT.
     """
     try:
-        # Inicialização do estado global com valores padrão seguros
+        system_prompts = {
+            "competency1": """Analise o domínio da norma culta, identificando apenas erros objetivos em:
+                            - Desvios claros da gramática normativa
+                            - Problemas inequívocos de concordância e regência
+                            - Erros indiscutíveis de pontuação que alteram sentido
+                            - Questões objetivas de acentuação e ortografia
+                            Diferencie cuidadosamente entre erros reais e questões estilísticas.""",
+            
+            "competency2": """Analise a compreensão do tema, verificando objetivamente:
+                            - Grau de aderência ao tema proposto
+                            - Qualidade e pertinência dos argumentos
+                            - Uso efetivo de repertório sociocultural
+                            - Desenvolvimento da discussão
+                            - Possível tangenciamento ou fuga""",
+            
+            "competency3": """Analise o projeto de texto, observando concretamente:
+                            - Estruturação dos argumentos
+                            - Progressão clara das ideias
+                            - Consistência da argumentação
+                            - Conexões entre parágrafos
+                            - Ausência de redundâncias ou contradições""",
+            
+            "competency4": """Analise os mecanismos linguísticos, identificando:
+                            - Uso adequado de conectivos
+                            - Elementos de referenciação
+                            - Articulação entre ideias
+                            - Recursos de coesão
+                            - Repetições problemáticas""",
+            
+            "competency5": """Analise a proposta de intervenção, verificando:
+                            - Presença dos cinco elementos essenciais
+                            - Nível de detalhamento
+                            - Conexão com argumentação
+                            - Viabilidade das sugestões
+                            - Respeito aos direitos humanos""",
+            
+            # Prompts específicos para atribuição de notas
+            "nota_comp1": """Atribua nota conforme critérios objetivos:
+                           200: Domínio excelente, desvios mínimos e não graves
+                           160: Bom domínio, poucos desvios sem prejuízo ao sentido
+                           120: Domínio mediano, desvios frequentes mas não graves
+                           80: Domínio insuficiente, desvios frequentes e graves
+                           40: Domínio precário, muitos desvios graves
+                           0: Texto incompreensível ou em outra modalidade""",
+            
+            "nota_comp2": """Atribua nota conforme critérios objetivos:
+                           200: Compreensão excelente, desenvolvimento completo
+                           160: Boa compreensão, desenvolvimento adequado
+                           120: Compreensão regular, desenvolvimento básico
+                           80: Compreensão tangencial ou desenvolvimento insuficiente
+                           40: Compreensão precária ou desenvolvimento inadequado
+                           0: Fuga total do tema""",
+            
+            "nota_comp3": """Atribua nota conforme critérios objetivos:
+                           200: Estruturação excelente, progressão impecável
+                           160: Boa estruturação, progressão adequada
+                           120: Estruturação regular, algumas falhas na progressão
+                           80: Estruturação insuficiente, problemas de progressão
+                           40: Estruturação precária, progressão comprometida
+                           0: Ausência de estruturação e progressão""",
+            
+            "nota_comp4": """Atribua nota conforme critérios objetivos:
+                           200: Articulação excelente, recursos variados
+                           160: Boa articulação, recursos adequados
+                           120: Articulação regular, recursos básicos
+                           80: Articulação insuficiente, poucos recursos
+                           40: Articulação precária, uso inadequado
+                           0: Ausência de articulação textual""",
+            
+            "nota_comp5": """Atribua nota conforme critérios objetivos:
+                           200: Proposta completa com 5 elementos
+                           160: Proposta boa com 4 elementos
+                           120: Proposta regular com 3 elementos
+                           80: Proposta insuficiente com 2 elementos
+                           40: Proposta precária com 1 elemento
+                           0: Sem proposta ou desconectada do tema""",
+        }
+        
+        system_prompt = system_prompts.get(
+            competency_type,
+            "Analise a redação seguindo critérios do ENEM."
+        )
+        
+        resposta = client.chat.completions.create(
+            model=ModeloAnalise.RAPIDO,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature
+        )
+        
+        return resposta.choices[0].message.content
+        
+    except Exception as e:
+        logger.error(f"Erro ao gerar análise: {str(e)}")
+        return "Erro ao gerar análise. Por favor, tente novamente."
+
+def analisar_competency1(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, int]) -> Dict[str, Any]:
+    """Análise da Competência 1: Domínio da Norma Culta"""
+    
+    # Análise detalhada dos aspectos gramaticais
+    prompt_analise = f"""
+    Analise detalhadamente o domínio da norma culta no texto a seguir, considerando:
+    
+    TEXTO:
+    {redacao_texto}
+    
+    MÉTRICAS:
+    - Número de palavras: {cohmetrix_results["Word Count"]}
+    - Número de sentenças: {cohmetrix_results["Sentence Count"]}
+    
+    Forneça uma análise que:
+    1. Identifique erros gramaticais graves e sistemáticos
+    2. Avalie o impacto dos erros na compreensão
+    3. Analise o domínio geral da norma culta
+    
+    Para cada erro identificado, use o formato:
+    ERRO
+    Trecho: "[trecho exato]"
+    Explicação: [explicação técnica]
+    Sugestão: [correção necessária]
+    FIM_ERRO
+    """
+    
+    analise_geral = generate_response(prompt_analise, "competency1")
+    
+    erros_identificados = extrair_erros_do_resultado(analise_geral)
+    erros_revisados = revisar_erros_competency1(erros_identificados, redacao_texto)
+    
+    return {
+        'analise': analise_geral,
+        'erros': erros_revisados,
+        'total_erros': len(erros_revisados)
+    }
+
+def analisar_competency2(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, int]) -> Dict[str, Any]:
+    """Análise da Competência 2: Compreensão do Tema"""
+    
+    prompt_analise = f"""
+    Analise a compreensão e desenvolvimento do tema no texto a seguir:
+    
+    TEMA PROPOSTO:
+    {tema_redacao}
+    
+    TEXTO:
+    {redacao_texto}
+    
+    MÉTRICAS:
+    - Palavras únicas: {cohmetrix_results["Unique Words"]}
+    - Diversidade lexical: {cohmetrix_results["Lexical Diversity"]}
+    
+    Forneça uma análise que:
+    1. Avalie a aderência ao tema proposto
+    2. Analise o uso de repertório sociocultural
+    3. Verifique a consistência argumentativa
+    
+    Para cada problema identificado, use o formato:
+    ERRO
+    Trecho: "[trecho exato]"
+    Explicação: [explicação detalhada]
+    Sugestão: [sugestão de melhoria]
+    FIM_ERRO
+    """
+    
+    analise_geral = generate_response(prompt_analise, "competency2")
+    
+    erros_identificados = extrair_erros_do_resultado(analise_geral)
+    erros_revisados = revisar_erros_competency2(erros_identificados, redacao_texto)
+    
+    return {
+        'analise': analise_geral,
+        'erros': erros_revisados,
+        'total_erros': len(erros_revisados)
+    }
+
+def analisar_competency3(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, int]) -> Dict[str, Any]:
+    """Análise da Competência 3: Seleção e Organização de Argumentos"""
+    
+    prompt_analise = f"""
+    Analise a seleção e organização de argumentos no texto a seguir:
+    
+    TEXTO:
+    {redacao_texto}
+    
+    MÉTRICAS:
+    - Parágrafos: {cohmetrix_results["Paragraph Count"]}
+    - Sentenças por parágrafo: {cohmetrix_results["Sentences per Paragraph"]}
+    
+    Forneça uma análise que:
+    1. Avalie a progressão das ideias
+    2. Analise a organização dos argumentos
+    3. Verifique a coerência argumentativa
+    
+    Para cada problema identificado, use o formato:
+    ERRO
+    Trecho: "[trecho exato]"
+    Explicação: [explicação detalhada]
+    Sugestão: [sugestão de melhoria]
+    FIM_ERRO
+    """
+    
+    analise_geral = generate_response(prompt_analise, "competency3")
+    
+    erros_identificados = extrair_erros_do_resultado(analise_geral)
+    erros_revisados = revisar_erros_competency3(erros_identificados, redacao_texto)
+    
+    return {
+        'analise': analise_geral,
+        'erros': erros_revisados,
+        'total_erros': len(erros_revisados)
+    }
+
+def analisar_competency4(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, int]) -> Dict[str, Any]:
+    """Análise da Competência 4: Mecanismos Linguísticos"""
+    
+    prompt_analise = f"""
+    Analise os mecanismos linguísticos no texto a seguir:
+    
+    TEXTO:
+    {redacao_texto}
+    
+    MÉTRICAS:
+    - Conectivos: {cohmetrix_results["Connectives"]}
+    - Frases nominais: {cohmetrix_results["Noun Phrases"]}
+    
+    Forneça uma análise que:
+    1. Avalie o uso de conectivos
+    2. Analise a coesão textual
+    3. Verifique a articulação entre ideias
+    
+    Para cada problema identificado, use o formato:
+    ERRO
+    Trecho: "[trecho exato]"
+    Explicação: [explicação detalhada]
+    Sugestão: [sugestão de melhoria]
+    FIM_ERRO
+    """
+    
+    analise_geral = generate_response(prompt_analise, "competency4")
+    
+    erros_identificados = extrair_erros_do_resultado(analise_geral)
+    erros_revisados = revisar_erros_competency4(erros_identificados, redacao_texto)
+    
+    return {
+        'analise': analise_geral,
+        'erros': erros_revisados,
+        'total_erros': len(erros_revisados)
+    }
+
+def analisar_competency5(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, int]) -> Dict[str, Any]:
+    """Análise da Competência 5: Proposta de Intervenção"""
+    
+    prompt_analise = f"""
+    Analise a proposta de intervenção no texto a seguir:
+    
+    TEXTO:
+    {redacao_texto}
+    
+    TEMA:
+    {tema_redacao}
+    
+    Forneça uma análise que:
+    1. Identifique os elementos da proposta
+    2. Avalie a relação com o tema
+    3. Verifique a viabilidade
+    
+    Para cada problema identificado, use o formato:
+    ERRO
+    Trecho: "[trecho exato]"
+    Explicação: [explicação detalhada]
+    Sugestão: [sugestão de melhoria]
+    FIM_ERRO
+    """
+    
+    analise_geral = generate_response(prompt_analise, "competency5")
+    
+    erros_identificados = extrair_erros_do_resultado(analise_geral)
+    erros_revisados = revisar_erros_competency5(erros_identificados, redacao_texto)
+    
+    return {
+        'analise': analise_geral,
+        'erros': erros_revisados,
+        'total_erros': len(erros_revisados)
+    }
+
+def atribuir_nota_competency1(analise: str, erros: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Atribui nota para Competência 1"""
+    prompt_nota = f"""
+    Com base na análise e erros identificados, atribua uma nota de 0 a 200:
+    
+    ANÁLISE:
+    {analise}
+    
+    ERROS IDENTIFICADOS:
+    {json.dumps(erros, indent=2)}
+    
+    Total de erros: {len(erros)}
+    
+    Forneça:
+    1. Nota (0, 40, 80, 120, 160 ou 200)
+    2. Justificativa detalhada
+    
+    Formato:
+    Nota: [VALOR]
+    Justificativa: [EXPLICAÇÃO]
+    """
+    
+    resposta = generate_response(prompt_nota, "nota_comp1")
+    return extrair_nota_e_justificativa(resposta)
+
+def atribuir_nota_competency2(analise: str, erros: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Atribui nota para Competência 2 - Compreensão do Tema"""
+    prompt_nota = f"""
+    Com base na análise e erros identificados, atribua uma nota de 0 a 200:
+    
+    ANÁLISE:
+    {analise}
+    
+    ERROS IDENTIFICADOS:
+    {json.dumps(erros, indent=2)}
+    
+    Total de erros: {len(erros)}
+    
+    Forneça:
+    1. Nota (0, 40, 80, 120, 160 ou 200)
+    2. Justificativa detalhada relacionada aos critérios do ENEM
+    
+    Formato:
+    Nota: [VALOR]
+    Justificativa: [EXPLICAÇÃO]
+    """
+    
+    resposta = generate_response(prompt_nota, "nota_comp2")
+    return extrair_nota_e_justificativa(resposta)
+
+def atribuir_nota_competency3(analise: str, erros: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Atribui nota para Competência 3 - Seleção e Organização de Argumentos"""
+    prompt_nota = f"""
+    Com base na análise e erros identificados, atribua uma nota de 0 a 200:
+    
+    ANÁLISE:
+    {analise}
+    
+    ERROS IDENTIFICADOS:
+    {json.dumps(erros, indent=2)}
+    
+    Total de erros: {len(erros)}
+    
+    Forneça:
+    1. Nota (0, 40, 80, 120, 160 ou 200)
+    2. Justificativa detalhada relacionada aos critérios do ENEM
+    
+    Formato:
+    Nota: [VALOR]
+    Justificativa: [EXPLICAÇÃO]
+    """
+    
+    resposta = generate_response(prompt_nota, "nota_comp3")
+    return extrair_nota_e_justificativa(resposta)
+
+def atribuir_nota_competency4(analise: str, erros: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Atribui nota para Competência 4 - Mecanismos Linguísticos"""
+    prompt_nota = f"""
+    Com base na análise e erros identificados, atribua uma nota de 0 a 200:
+    
+    ANÁLISE:
+    {analise}
+    
+    ERROS IDENTIFICADOS:
+    {json.dumps(erros, indent=2)}
+    
+    Total de erros: {len(erros)}
+    
+    Forneça:
+    1. Nota (0, 40, 80, 120, 160 ou 200)
+    2. Justificativa detalhada relacionada aos critérios do ENEM
+    
+    Formato:
+    Nota: [VALOR]
+    Justificativa: [EXPLICAÇÃO]
+    """
+    
+    resposta = generate_response(prompt_nota, "nota_comp4")
+    return extrair_nota_e_justificativa(resposta)
+
+def atribuir_nota_competency5(analise: str, erros: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Atribui nota para Competência 5 - Proposta de Intervenção"""
+    prompt_nota = f"""
+    Com base na análise e erros identificados, atribua uma nota de 0 a 200:
+    
+    ANÁLISE:
+    {analise}
+    
+    ERROS IDENTIFICADOS:
+    {json.dumps(erros, indent=2)}
+    
+    Total de erros: {len(erros)}
+    
+    Forneça:
+    1. Nota (0, 40, 80, 120, 160 ou 200)
+    2. Justificativa detalhada relacionada aos critérios do ENEM
+    
+    Formato:
+    Nota: [VALOR]
+    Justificativa: [EXPLICAÇÃO]
+    """
+    
+    resposta = generate_response(prompt_nota, "nota_comp5")
+    return extrair_nota_e_justificativa(resposta)
+
+def extrair_nota_e_justificativa(resposta: str) -> Dict[str, Any]:
+    """
+    Extrai a nota e justificativa de uma resposta formatada.
+    
+    Args:
+        resposta: String contendo a resposta com nota e justificativa
+        
+    Returns:
+        Dict contendo a nota (int) e justificativa (str)
+    """
+    linhas = resposta.strip().split('\n')
+    nota = None
+    justificativa = []
+    lendo_justificativa = False
+    
+    for linha in linhas:
+        linha = linha.strip()
+        if linha.startswith('Nota:'):
+            try:
+                # Extrai apenas o número da linha
+                valor_texto = linha.split(':')[1].strip()
+                # Remove qualquer texto adicional e converte para inteiro
+                nota = int(''.join(filter(str.isdigit, valor_texto)))
+                
+                # Valida se a nota está nos valores permitidos
+                if nota not in [0, 40, 80, 120, 160, 200]:
+                    # Arredonda para o valor permitido mais próximo
+                    valores_permitidos = [0, 40, 80, 120, 160, 200]
+                    nota = min(valores_permitidos, key=lambda x: abs(x - nota))
+            except (ValueError, IndexError):
+                logger.error(f"Erro ao extrair nota da linha: {linha}")
+                nota = 0
+        elif linha.startswith('Justificativa:'):
+            lendo_justificativa = True
+        elif lendo_justificativa and linha:
+            justificativa.append(linha)
+    
+    # Se não encontrou nota, usa 0 como fallback
+    if nota is None:
+        logger.warning("Nota não encontrada na resposta, usando 0 como fallback")
+        nota = 0
+    
+    # Se não encontrou justificativa, usa mensagem padrão
+    if not justificativa:
+        justificativa = ["Não foi possível extrair uma justificativa adequada."]
+    
+    return {
+        'nota': nota,
+        'justificativa': ' '.join(justificativa)
+    }
+
+def extrair_erros_do_resultado(resultado: str) -> List[Dict[str, str]]:
+    """
+    Extrai informações de erros de uma resposta formatada.
+    
+    Args:
+        resultado: String contendo o resultado da análise
+        
+    Returns:
+        Lista de dicionários com informações dos erros
+    """
+    erros = []
+    padrao_erro = re.compile(r'ERRO\n(.*?)\nFIM_ERRO', re.DOTALL)
+    matches = padrao_erro.findall(resultado)
+    
+    for match in matches:
+        erro = {}
+        for linha in match.split('\n'):
+            if ':' in linha:
+                chave, valor = linha.split(':', 1)
+                chave = chave.strip().lower()
+                valor = valor.strip()
+                if chave == 'trecho':
+                    valor = valor.strip('"')  # Remove aspas do trecho
+                erro[chave] = valor
+        
+        # Só inclui erro se tiver pelo menos trecho e explicação
+        if 'trecho' in erro and 'explicação' in erro:
+            erros.append(erro)
+    
+    return erros
+    
+
+
+def main():
+    """
+    Função principal da aplicação Streamlit.
+    Coordena a interface e o fluxo de análise.
+    """
+    try:
+        # Configurações iniciais
+        st.set_page_config(
+            page_title="Editor Interativo de Redação ENEM",
+            layout="wide",
+            initial_sidebar_state="collapsed"
+        )
+        
+        # Inicialização do estado
         if 'page' not in st.session_state:
             st.session_state.page = 'editor'
-        
         if 'tema_redacao' not in st.session_state:
             st.session_state.tema_redacao = ""
-        
         if 'redacao_texto' not in st.session_state:
             st.session_state.redacao_texto = ""
-        
-        # Sempre garante que resultados tem uma estrutura válida
-        if 'resultados' not in st.session_state or st.session_state.resultados is None:
-            st.session_state.resultados = initialize_empty_results()
-        
+        if 'resultados' not in st.session_state:
+            st.session_state.resultados = None
         if 'historico_analises' not in st.session_state:
             st.session_state.historico_analises = []
-
-        # Inicialização dos verificadores
-        verificador_gramatical = VerificadorGramatical()
-            
+        
+        # Configuração de estilos e tema
+        aplicar_estilos()
+        
         # Navegação entre páginas
         if st.session_state.page == 'editor':
-            # Configurações iniciais
-            aplicar_estilos()
+            # Barra lateral com configurações
+            with st.sidebar:
+                st.markdown("### ⚙️ Configurações")
+                tema = st.text_area(
+                    "Tema da Redação",
+                    value=st.session_state.tema_redacao,
+                    help="Digite o tema para análise mais precisa",
+                    height=100
+                )
+                if tema != st.session_state.tema_redacao:
+                    st.session_state.tema_redacao = tema
+                    st.session_state.resultados = None
             
             # Interface principal
             st.title("📝 Editor Interativo de Redação ENEM")
             
-            # Seção de Tema da Redação
-            st.markdown("### 📋 Tema da Redação")
-            col_tema, col_ajuda = st.columns([3, 1])
-            
-            with col_tema:
-                tema_atual = st.text_area(
-                    "Digite ou cole o tema da redação aqui:",
-                    value=st.session_state.tema_redacao,
-                    height=100,
-                    key="input_tema_redacao",
-                    help="O tema é fundamental para uma análise precisa da sua redação"
-                )
-                
-                if tema_atual != st.session_state.tema_redacao:
-                    st.session_state.tema_redacao = tema_atual
-                    # Reseta resultados quando o tema muda
-                    st.session_state.resultados = initialize_empty_results()
-            
-            with col_ajuda:
-                with st.expander("ℹ️ Dicas para o tema"):
-                    st.markdown("""
-                        **Por que o tema é importante?**
-                        - Permite análise contextualizada
-                        - Melhora as sugestões de argumentos
-                        - Ajuda na avaliação da aderência ao tema
-                    """)
+            # Verifica tema
+            if not st.session_state.tema_redacao.strip():
+                st.warning("⚠️ Por favor, insira o tema da redação antes de começar.")
             
             # Editor principal
             texto = st.text_area(
                 "Digite sua redação aqui:",
                 height=300,
                 key="editor_redacao",
-                help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco.",
                 value=st.session_state.redacao_texto,
                 disabled=not st.session_state.tema_redacao.strip()
             )
             
-            # Se o editor estiver desabilitado, mostra mensagem explicativa
-            if not st.session_state.tema_redacao.strip():
-                st.info("📝 O editor será habilitado após a inserção do tema da redação.")
-            
-            # Atualiza o estado quando o texto muda
+            # Atualiza estado quando o texto muda
             if texto != st.session_state.redacao_texto:
                 st.session_state.redacao_texto = texto
-                # Ao invés de definir como None, inicializa com estrutura vazia
-                st.session_state.resultados = initialize_empty_results()
-            
-            if texto and st.session_state.tema_redacao.strip():
-                with st.spinner("📊 Analisando sua redação..."):
-                    paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
-                    
-                    if paragrafos:
-                        # Sistema de tabs para análise de parágrafos
-                        tabs = st.tabs([
-                            f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
-                            for i, p in enumerate(paragrafos)
-                        ])
-                        
-                        # Análise em cada tab
-                        analises_paragrafos = []
-                        for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
-                            with tab:
-                                tipo = detectar_tipo_paragrafo(paragrafo, i)
-                                
-                                # Adiciona identificador visual do tipo de parágrafo
-                                icones = {
-                                    "introducao": "🎯",
-                                    "desenvolvimento1": "💡",
-                                    "desenvolvimento2": "📚",
-                                    "conclusao": "✨"
-                                }
-                                st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
-                                
-                                # Análise do parágrafo
-                                analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
-                                mostrar_analise_tempo_real(analise)
-                                analises_paragrafos.append(analise)
-                        
-                        # Armazena análises no histórico
-                        st.session_state.historico_analises = analises_paragrafos
-                        
-                        # Atualiza resultados com base nas análises
-                        resultados_atualizados = initialize_empty_results()
-                        # Aqui você pode adicionar lógica para preencher resultados_atualizados
-                        # baseado nas análises dos parágrafos
-                        st.session_state.resultados = resultados_atualizados
+                st.session_state.resultados = None
             
             # Botões de ação
-            if texto and st.session_state.tema_redacao.strip():
+            if texto and st.session_state.tema_redacao:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("💾 Salvar Rascunho", use_container_width=True):
                         st.session_state.ultimo_rascunho = texto
                         st.success("Rascunho salvo com sucesso!")
-                        
+                
                 with col2:
-                    if st.button("📊 Análise Completa", type="primary", use_container_width=True):
-                        # Garante que temos resultados válidos antes de mudar de página
-                        if st.session_state.resultados is None:
-                            st.session_state.resultados = initialize_empty_results()
-                        st.session_state.page = 'analise'
-                        st.rerun()
+                    if st.button("📊 Analisar Redação", type="primary", use_container_width=True):
+                        with st.spinner("Analisando sua redação..."):
+                            resultados = processar_redacao_completa(texto, st.session_state.tema_redacao)
+                            st.session_state.resultados = resultados
+                            st.session_state.page = 'analise'
+                            st.rerun()
             
         elif st.session_state.page == 'analise':
-            # Garante que temos resultados válidos antes de mostrar a análise
-            if st.session_state.resultados is None:
-                st.session_state.resultados = initialize_empty_results()
-            pagina_analise()
-            
+            if not st.session_state.resultados:
+                st.warning("Por favor, submeta uma redação para análise.")
+                if st.button("← Voltar ao Editor"):
+                    st.session_state.page = 'editor'
+                    st.rerun()
+            else:
+                mostrar_analise_completa()  # Função que você já deve ter implementado
+        
+        # Rodapé
+        st.markdown("---")
+        st.markdown(
+            """<div style='text-align: center; color: #666;'>
+            Editor Interativo de Redação ENEM - Desenvolvido para auxiliar estudantes
+            </div>""",
+            unsafe_allow_html=True
+        )
+        
     except Exception as e:
-        logger.error(f"Erro na execução principal: {e}")
+        logger.error(f"Erro na execução principal: {str(e)}")
         st.error(
-            f"""Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte.
+            """Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte.
             
             Detalhes técnicos: {str(e)}"""
         )
         
-        # Botão de recuperação com reinicialização segura
+        # Botão de recuperação
         if st.button("🔄 Reiniciar Aplicativo"):
-            # Reinicializa com valores padrão seguros
-            st.session_state.page = 'editor'
-            st.session_state.tema_redacao = ""
-            st.session_state.redacao_texto = ""
-            st.session_state.resultados = initialize_empty_results()
-            st.session_state.historico_analises = []
+            for key in st.session_state.keys():
+                del st.session_state[key]
             st.rerun()
 
 if __name__ == "__main__":
