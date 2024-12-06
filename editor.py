@@ -1307,31 +1307,55 @@ def criar_grafico_barras(notas: Dict[str, int]):
 def main():
     """
     Função principal do aplicativo, controlando a navegação e funcionalidades.
+    Inclui gestão de estado, navegação entre páginas, e tratamento de erros.
     """
     try:
-        # Inicializar estado da página se não existir
+        # Inicialização do estado global
         if 'page' not in st.session_state:
             st.session_state.page = 'editor'
+        if 'tema' not in st.session_state:
+            st.session_state.tema_redacao = "Os desafios relacionados à Cultura do cancelamento na internet"
+        if 'redacao_texto' not in st.session_state:
+            st.session_state.redacao_texto = ""
+        if 'resultados' not in st.session_state:
+            st.session_state.resultados = None
+        if 'historico_analises' not in st.session_state:
+            st.session_state.historico_analises = []
+
+        # Inicialização dos verificadores
+        verificador_gramatical = VerificadorGramatical()
             
         # Navegação entre páginas
         if st.session_state.page == 'editor':
             # Configurações iniciais
             aplicar_estilos()
             
-            # Sidebar
+            # Sidebar com configurações
             with st.sidebar:
                 st.markdown("### ⚙️ Configurações")
-                if 'tema' not in st.session_state:
-                    st.session_state.tema = "Os desafios relacionados à Cultura do cancelamento na internet"
                 
+                # Configuração do tema
                 tema = st.text_area(
                     "Tema da Redação",
-                    value=st.session_state.tema,
+                    value=st.session_state.tema_redacao,
                     help="Digite o tema para análise mais precisa",
                     height=100
                 )
-                if tema != st.session_state.tema:
-                    st.session_state.tema = tema
+                if tema != st.session_state.tema_redacao:
+                    st.session_state.tema_redacao = tema
+                
+                # Configurações adicionais
+                with st.expander("Configurações Avançadas"):
+                    st.checkbox(
+                        "Ativar análise gramatical em tempo real",
+                        value=True,
+                        key="analise_gramatical_real_time"
+                    )
+                    st.checkbox(
+                        "Mostrar sugestões detalhadas",
+                        value=True,
+                        key="mostrar_sugestoes_detalhadas"
+                    )
             
             # Interface principal
             st.title("📝 Editor Interativo de Redação ENEM")
@@ -1345,26 +1369,33 @@ def main():
                 3. Receba feedback instantâneo sobre cada parágrafo
             """)
             
-            # Editor
+            # Editor principal
             texto = st.text_area(
                 "Digite sua redação aqui:",
                 height=300,
                 key="editor_redacao",
-                help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco."
+                help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco.",
+                value=st.session_state.redacao_texto
             )
+            
+            # Atualiza o estado quando o texto muda
+            if texto != st.session_state.redacao_texto:
+                st.session_state.redacao_texto = texto
+                st.session_state.resultados = None  # Reseta resultados anteriores
             
             if texto:
                 with st.spinner("📊 Analisando sua redação..."):
                     paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
                     
                     if paragrafos:
-                        # Criar tabs para cada parágrafo
+                        # Sistema de tabs para análise de parágrafos
                         tabs = st.tabs([
                             f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
                             for i, p in enumerate(paragrafos)
                         ])
                         
                         # Análise em cada tab
+                        analises_paragrafos = []
                         for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
                             with tab:
                                 tipo = detectar_tipo_paragrafo(paragrafo, i)
@@ -1385,6 +1416,10 @@ def main():
                                 # Análise do parágrafo
                                 analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
                                 mostrar_analise_tempo_real(analise)
+                                analises_paragrafos.append(analise)
+                        
+                        # Armazena análises no histórico
+                        st.session_state.historico_analises = analises_paragrafos
                         
                         # Resumo geral após as tabs
                         st.markdown("---")
@@ -1404,28 +1439,36 @@ def main():
                         
                         with col2:
                             total_palavras = sum(len(p.split()) for p in paragrafos)
+                            status_palavras = "✅" if 2500 <= total_palavras <= 3000 else "⚠️"
                             st.metric(
                                 "Total de Palavras",
-                                total_palavras,
+                                f"{status_palavras} {total_palavras}",
                                 "Meta: 2500-3000"
                             )
                         
                         with col3:
-                            if total_paragrafos < 4:
-                                proximo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
-                                st.info(f"Próximo: {proximo}")
-                            else:
-                                st.success("✅ Estrutura Completa!")
+                            # Cálculo da nota estimada
+                            media_scores = sum(a.elementos.score for a in analises_paragrafos) / len(analises_paragrafos)
+                            nota_estimada = int(media_scores * 1000)
+                            st.metric(
+                                "Nota Estimada",
+                                f"{nota_estimada}/1000",
+                                "Baseada na análise atual"
+                            )
+                        
+                        # Botões de ação
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("💾 Salvar Rascunho", use_container_width=True):
+                                st.session_state.ultimo_rascunho = texto
+                                st.success("Rascunho salvo com sucesso!")
+                                
+                        with col2:
+                            if st.button("📊 Análise Completa", type="primary", use_container_width=True):
+                                st.session_state.page = 'analise'
+                                st.rerun()
             
-            # Botão para ir para análise do sistema
-            st.markdown("---")
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button("Ver Análise do Sistema", type="primary", use_container_width=True):
-                    st.session_state.page = 'analise'
-                    st.rerun()
-            
-            # Footer
+            # Footer informativo
             st.markdown("---")
             st.markdown(
                 """<div style='text-align: center; opacity: 0.7;'>
@@ -1438,12 +1481,27 @@ def main():
         elif st.session_state.page == 'analise':
             pagina_analise()
             
+        elif st.session_state.page == 'trilhas':
+            # Implementação futura da página de trilhas de aprendizado
+            st.title("🎯 Trilhas de Aprendizado")
+            st.info("Esta funcionalidade será implementada em breve!")
+            if st.button("← Voltar à Análise"):
+                st.session_state.page = 'analise'
+                st.rerun()
+            
     except Exception as e:
         logger.error(f"Erro na execução principal: {e}")
         st.error(
-            "Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte."
+            """Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte.
+            
+            Detalhes técnicos: {str(e)}"""
         )
+        
+        # Botão de recuperação
+        if st.button("🔄 Reiniciar Aplicativo"):
+            for key in st.session_state.keys():
+                del st.session_state[key]
+            st.rerun()
 
 if __name__ == "__main__":
     main()
-
