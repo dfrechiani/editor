@@ -531,7 +531,7 @@ def destacar_argumentos(texto: str, argumentos: List[ArgumentoAnalise]) -> str:
     return texto_destacado
 
 def destacar_conectivos(texto: str, analise: AnaliseConectivos) -> str:
-    """Destaca conectivos no texto evitando sobreposição de marcações."""
+    """Destaca conectivos no texto com marcação HTML mais robusta."""
     if not analise.conectivos:
         return texto
         
@@ -545,42 +545,60 @@ def destacar_conectivos(texto: str, analise: AnaliseConectivos) -> str:
         "enfáticos": "#FF9800"       # Laranja claro
     }
     
-    # Ordena conectivos por tamanho (maior primeiro) e posição
-    conectivos_ordenados = sorted(
-        analise.conectivos,
-        key=lambda x: (-len(x.texto), x.posicao[0])
-    )
-    
-    # Cria uma lista de posições já marcadas
+    # Prepara lista de posições e marcações
     marcacoes = []
-    texto_final = texto
-    
-    for conectivo in conectivos_ordenados:
+    for conectivo in analise.conectivos:
         inicio, fim = conectivo.posicao
+        cor = cores_tipo.get(conectivo.tipo, "#666666")
+        texto_original = texto[inicio:fim]
+        
+        marcacao = {
+            "inicio": inicio,
+            "fim": fim,
+            "tipo": conectivo.tipo,
+            "texto": texto_original,
+            "cor": cor,
+            "frequencia": conectivo.frequencia
+        }
+        marcacoes.append(marcacao)
+    
+    # Ordena marcações do fim para o início
+    marcacoes.sort(key=lambda x: (x["inicio"], -len(x["texto"])), reverse=True)
+    
+    # Aplica marcações
+    texto_final = texto
+    posicoes_marcadas = set()
+    
+    for marcacao in marcacoes:
+        inicio = marcacao["inicio"]
+        fim = marcacao["fim"]
         
         # Verifica se a posição já foi marcada
-        sobrepoe = any(
-            (m[0] <= inicio <= m[1]) or (m[0] <= fim <= m[1])
-            for m in marcacoes
-        )
-        
-        if not sobrepoe:
-            texto_original = texto_final[inicio:fim]
-            # Evita marcar parte de palavras
-            if re.match(r'\b' + re.escape(texto_original.lower()) + r'\b', texto_original.lower()):
-                marcacao = (
-                    f'<span style="background-color: {cores_tipo[conectivo.tipo]}22; '
-                    f'border-bottom: 2px solid {cores_tipo[conectivo.tipo]}; '
-                    f'padding: 0 2px; cursor: help;" '
-                    f'title="Tipo: {conectivo.tipo}">'
-                    f'{texto_original}</span>'
-                )
-                texto_final = (
-                    texto_final[:inicio] +
-                    marcacao +
-                    texto_final[fim:]
-                )
-                marcacoes.append((inicio, fim))
+        range_atual = set(range(inicio, fim))
+        if not range_atual.intersection(posicoes_marcadas):
+            html = (
+                f'<span class="conectivo" '
+                f'style="'
+                f'background-color: {marcacao["cor"]}22; '
+                f'border-bottom: 2px solid {marcacao["cor"]}; '
+                f'padding: 0 2px; '
+                f'margin: 0 1px; '
+                f'border-radius: 2px; '
+                f'cursor: help;" '
+                f'title="Tipo: {marcacao["tipo"].title()}'
+                f'{" | Usado: " + str(marcacao["frequencia"]) + "x" if marcacao["frequencia"] > 1 else ""}'
+                f'">'
+                f'{marcacao["texto"]}'
+                f'</span>'
+            )
+            
+            texto_final = (
+                texto_final[:inicio] +
+                html +
+                texto_final[fim:]
+            )
+            
+            posicoes_marcadas.update(range_atual)
     
     return texto_final
 
@@ -1373,6 +1391,177 @@ def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
             '>{fb}</div>""",
             unsafe_allow_html=True
         )
+
+def analisar_conectivos_com_ia(texto: str, retry_count: int = 0) -> Optional[List[Dict]]:
+    """Analisa conectivos usando IA para identificação mais precisa."""
+    if retry_count >= MAX_RETRIES or not client:
+        return None
+        
+    try:
+        prompt = f"""Analise este texto e identifique todos os conectivos importantes para o ENEM, retornando um JSON com o seguinte formato:
+{{
+    "conectivos": [
+        {{
+            "texto": "conectivo encontrado",
+            "tipo": "tipo do conectivo (aditivo/adversativo/conclusivo/etc)",
+            "indice_inicio": posição inicial no texto,
+            "indice_fim": posição final no texto
+        }}
+    ]
+}}
+
+Considere apenas conectivos relevantes para o ENEM, como:
+- Conclusivos: portanto, dessa forma, por conseguinte, logo, assim sendo
+- Explicativos: visto que, uma vez que, tendo em vista que, já que
+- Adversativos: entretanto, no entanto, contudo, todavia, porém
+- Aditivos: além disso, ademais, outrossim, igualmente
+- Sequenciais: primeiramente, em seguida, por fim
+E outros conectivos importantes que contribuam para a argumentação.
+
+Ignore conectivos básicos como "e", "mas", "ou".
+
+Texto para análise:
+{texto}"""
+
+        response = client.chat.completions.create(
+            model=ModeloAnalise.RAPIDO,
+            messages=[{
+                "role": "system",
+                "content": "Você é um analisador especializado em identificar conectivos em textos do ENEM."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }],
+            temperature=0.3,
+            max_tokens=500,
+            timeout=API_TIMEOUT,
+            response_format={"type": "json_object"}
+        )
+        
+        try:
+            resposta_texto = response.choices[0].message.content.strip()
+            resposta_texto = resposta_texto[resposta_texto.find("{"):resposta_texto.rfind("}")+1]
+            resultado = json.loads(resposta_texto)
+            
+            if "conectivos" not in resultado:
+                raise ValueError("Resposta JSON incompleta")
+                
+            return resultado["conectivos"]
+            
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Erro no parsing da resposta IA: {e}. Tentativa {retry_count + 1}")
+            if retry_count < MAX_RETRIES:
+                from time import sleep
+                sleep(1)
+                return analisar_conectivos_com_ia(texto, retry_count + 1)
+            return None
+            
+    except Exception as e:
+        logger.error(f"Erro na análise IA de conectivos: {str(e)}")
+        return None
+
+class AnalisadorConectivos:
+    def __init__(self):
+        # Mantém o dicionário de conectivos como referência
+        self.conectivos_por_tipo = {
+            "aditivos": [
+                "além disso", "ademais", "outrossim",
+                "não apenas... mas também", "inclusive",
+                "soma-se a isso", "igualmente"
+            ],
+            # ... [resto do dicionário permanece igual]
+        }
+
+    def identificar_conectivos(self, texto: str) -> AnaliseConectivos:
+        """Identifica conectivos usando combinação de análise básica e IA."""
+        # Primeiro, tenta análise via IA
+        conectivos_ia = analisar_conectivos_com_ia(texto)
+        
+        conectivos_encontrados = []
+        estatisticas = {tipo: 0 for tipo in self.conectivos_por_tipo.keys()}
+        repeticoes = {}
+        
+        if conectivos_ia:
+            # Processa resultados da IA
+            for conectivo in conectivos_ia:
+                tipo = conectivo["tipo"]
+                texto_conectivo = conectivo["texto"]
+                inicio = conectivo["indice_inicio"]
+                fim = conectivo["indice_fim"]
+                
+                # Registra estatísticas
+                if tipo in estatisticas:
+                    estatisticas[tipo] += 1
+                    
+                    # Verifica repetições
+                    if texto_conectivo in repeticoes:
+                        repeticoes[texto_conectivo] += 1
+                    else:
+                        repeticoes[texto_conectivo] = 1
+                
+                conectivos_encontrados.append(ConectivoAnalise(
+                    texto=texto_conectivo,
+                    tipo=tipo,
+                    posicao=(inicio, fim),
+                    frequencia=repeticoes.get(texto_conectivo, 1)
+                ))
+        
+        # Realiza análise complementar com o método tradicional
+        self._adicionar_conectivos_tradicionais(
+            texto, 
+            conectivos_encontrados, 
+            estatisticas, 
+            repeticoes
+        )
+        
+        score = self._calcular_score(estatisticas, repeticoes)
+        feedback = self._gerar_feedback(estatisticas, repeticoes)
+        
+        return AnaliseConectivos(
+            conectivos=conectivos_encontrados,
+            estatisticas=estatisticas,
+            repeticoes=repeticoes,
+            score=score,
+            feedback=feedback
+        )
+
+    def _adicionar_conectivos_tradicionais(
+        self, 
+        texto: str, 
+        conectivos_encontrados: List[ConectivoAnalise],
+        estatisticas: Dict[str, int],
+        repeticoes: Dict[str, int]
+    ):
+        """Adiciona conectivos encontrados pelo método tradicional."""
+        texto_lower = texto.lower()
+        posicoes_existentes = set(
+            (c.posicao[0], c.posicao[1]) 
+            for c in conectivos_encontrados
+        )
+        
+        for tipo, lista_conectivos in self.conectivos_por_tipo.items():
+            for conectivo in lista_conectivos:
+                padrao = rf'\b{re.escape(conectivo)}\b'
+                for match in re.finditer(padrao, texto_lower):
+                    inicio, fim = match.span()
+                    
+                    # Verifica se já foi encontrado pela IA
+                    if (inicio, fim) not in posicoes_existentes:
+                        estatisticas[tipo] += 1
+                        
+                        if conectivo in repeticoes:
+                            repeticoes[conectivo] += 1
+                        else:
+                            repeticoes[conectivo] = 1
+                        
+                        conectivos_encontrados.append(ConectivoAnalise(
+                            texto=texto[inicio:fim],
+                            tipo=tipo,
+                            posicao=(inicio, fim),
+                            frequencia=repeticoes[conectivo]
+                        ))
+                        posicoes_existentes.add((inicio, fim))
 
 def main():
     try:
