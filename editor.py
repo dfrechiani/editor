@@ -1158,6 +1158,196 @@ SUGESTOES_RAPIDAS = {
     ],
 }
 
+def analisar_com_ia(texto: str, tipo: str, retry_count: int = 0) -> Optional[AnaliseElementos]:
+    """Realiza análise usando IA com tratamento robusto de erros."""
+    if retry_count >= MAX_RETRIES or not client:
+        return None
+        
+    try:
+        prompt = f"""Analise este {tipo} de redação ENEM e retorne um JSON válido seguindo exatamente este formato, sem adicionar nada mais:
+
+{{
+    "elementos_presentes": ["elemento1", "elemento2"],
+    "elementos_ausentes": ["elemento3", "elemento4"],
+    "sugestoes": ["sugestão 1", "sugestão 2"]
+}}
+
+Texto para análise:
+{texto}"""
+
+        response = client.chat.completions.create(
+            model=ModeloAnalise.RAPIDO,
+            messages=[{
+                "role": "system",
+                "content": "Você é um analisador de redações que retorna apenas JSON válido sem nenhum texto adicional."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }],
+            temperature=0.3,
+            max_tokens=500,
+            timeout=API_TIMEOUT,
+            response_format={"type": "json_object"}
+        )
+        
+        try:
+            resposta_texto = response.choices[0].message.content.strip()
+            resposta_texto = resposta_texto[resposta_texto.find("{"):resposta_texto.rfind("}")+1]
+            
+            resultado = json.loads(resposta_texto)
+            
+            campos_obrigatorios = ["elementos_presentes", "elementos_ausentes", "sugestoes"]
+            if not all(campo in resultado for campo in campos_obrigatorios):
+                raise ValueError("Resposta JSON incompleta")
+                
+            return AnaliseElementos(
+                presentes=resultado["elementos_presentes"][:3],
+                ausentes=resultado["elementos_ausentes"][:3],
+                score=len(resultado["elementos_presentes"]) / (
+                    len(resultado["elementos_presentes"]) + len(resultado["elementos_ausentes"]) or 1
+                ),
+                sugestoes=resultado["sugestoes"][:2]
+            )
+            
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Erro no parsing da resposta IA: {e}. Tentativa {retry_count + 1}")
+            if retry_count < MAX_RETRIES:
+                from time import sleep
+                sleep(1)
+                return analisar_com_ia(texto, tipo, retry_count + 1)
+            return None
+            
+    except Exception as e:
+        logger.error(f"Erro na análise IA: {str(e)}")
+        return None
+
+def combinar_analises(analise_basica: AnaliseElementos, analise_ia: Optional[AnaliseElementos]) -> AnaliseElementos:
+    """Combina os resultados das análises básica e IA de forma ponderada."""
+    if not analise_ia:
+        return analise_basica
+    
+    try:
+        # Combina elementos presentes (união dos conjuntos)
+        elementos_presentes = list(set(analise_basica.presentes + analise_ia.presentes))
+        
+        # Combina elementos ausentes (interseção dos conjuntos)
+        elementos_ausentes = list(
+            set(analise_basica.ausentes).intersection(set(analise_ia.ausentes))
+        )
+        
+        # Média ponderada dos scores (60% básica, 40% IA)
+        score = (analise_basica.score * 0.6) + (analise_ia.score * 0.4)
+        
+        # Combina e prioriza sugestões
+        sugestoes_combinadas = []
+        
+        # Primeiro, adiciona sugestões que aparecem em ambas as análises
+        sugestoes_comuns = set(analise_basica.sugestoes).intersection(set(analise_ia.sugestoes))
+        sugestoes_combinadas.extend(list(sugestoes_comuns))
+        
+        # Depois, completa com sugestões únicas até o limite
+        sugestoes_restantes = set(analise_basica.sugestoes + analise_ia.sugestoes) - sugestoes_comuns
+        sugestoes_combinadas.extend(list(sugestoes_restantes)[:3 - len(sugestoes_combinadas)])
+        
+        return AnaliseElementos(
+            presentes=elementos_presentes,
+            ausentes=elementos_ausentes,
+            score=min(1.0, max(0.0, score)),  # Garante score entre 0 e 1
+            sugestoes=sugestoes_combinadas
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro ao combinar análises: {e}")
+        return analise_basica
+
+def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
+    """Exibe a análise completa em tempo real com todas as análises integradas."""
+    st.markdown(f"## Análise do {analise.tipo.title()}")
+    
+    # Layout principal
+    col_texto, col_analise = st.columns([0.6, 0.4])
+    
+    # Coluna do texto
+    with col_texto:
+        st.markdown("### 📝 Texto Analisado")
+        
+        # Aplica todas as marcações no texto
+        texto_final = analise.texto
+        
+        # 1. Destaca conectivos
+        if analise.analise_conectivos:
+            texto_final = destacar_conectivos(texto_final, analise.analise_conectivos)
+        
+        # 2. Destaca argumentos
+        if analise.argumentos:
+            texto_final = destacar_argumentos(texto_final, analise.argumentos)
+        
+        # 3. Marca erros gramaticais
+        if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
+            texto_final = marcar_erros_no_texto(texto_final, analise.correcao_gramatical)
+        
+        # Exibe texto com todas as marcações
+        st.markdown(
+            f"""<div class='texto-analise'>{texto_final}</div>""",
+            unsafe_allow_html=True
+        )
+        
+        # Mostra legenda
+        mostrar_legenda_conectivos()
+    
+    # Coluna de análise
+    with col_analise:
+        # Tabs para diferentes análises
+        tab_estrutura, tab_conectivos, tab_gramatical = st.tabs([
+            "Estrutura", 
+            "Conectivos", 
+            "Gramática"
+        ])
+        
+        # Tab de estrutura
+        with tab_estrutura:
+            if analise.argumentos:
+                mostrar_analise_argumentos(analise.argumentos)
+            
+            st.markdown("#### 📊 Elementos Estruturais")
+            col1, col2 = st.columns(2)
+            with col1:
+                elementos_presentes = len(analise.elementos.presentes)
+                st.metric("Elementos Presentes", elementos_presentes)
+            with col2:
+                st.metric(
+                    "Qualidade Estrutural",
+                    f"{int(analise.elementos.score * 100)}%"
+                )
+        
+        # Tab de conectivos
+        with tab_conectivos:
+            if analise.analise_conectivos:
+                mostrar_analise_conectivos(analise.analise_conectivos)
+            else:
+                st.info("Nenhum conectivo identificado.")
+        
+        # Tab gramatical
+        with tab_gramatical:
+            if analise.correcao_gramatical:
+                mostrar_correcoes_gramaticais(analise.correcao_gramatical)
+            else:
+                st.info("Análise gramatical não disponível.")
+    
+    # Feedback geral
+    st.markdown("### 💡 Feedback Geral")
+    for fb in analise.feedback:
+        st.markdown(
+            f"""<div style='
+                background-color: #1e2a3a;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 5px 0;
+            '>{fb}</div>""",
+            unsafe_allow_html=True
+        )
+
 def main():
     try:
         # Configurações iniciais
