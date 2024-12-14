@@ -337,43 +337,44 @@ class AnalisadorConectivos:
     def __init__(self):
         self.conectivos_por_tipo = {
             "aditivos": [
-                "além disso", "ademais", "também", "e", "outrossim",
-                "não apenas... mas também", "inclusive", "ainda", 
-                "nem", "não só... mas também"
+                "além disso", "ademais", "outrossim",
+                "não apenas... mas também", "inclusive",
+                "soma-se a isso", "igualmente"
             ],
             "adversativos": [
-                "mas", "porém", "contudo", "entretanto", "no entanto",
-                "todavia", "não obstante", "apesar de", "embora", 
-                "ainda que", "mesmo que", "posto que"
+                "entretanto", "no entanto", "todavia", 
+                "não obstante", "apesar de", "embora", 
+                "contudo", "porém"
             ],
             "conclusivos": [
-                "portanto", "logo", "assim", "dessa forma", "por isso",
-                "consequentemente", "por conseguinte", "então", 
-                "destarte", "desse modo", "sendo assim"
+                "portanto", "dessa forma", "por conseguinte",
+                "consequentemente", "destarte", "sendo assim",
+                "desse modo", "diante disso"
             ],
             "explicativos": [
-                "pois", "porque", "já que", "visto que", "uma vez que",
-                "porquanto", "posto que", "tendo em vista que", 
-                "haja vista que", "considerando que"
+                "visto que", "uma vez que", "posto que", 
+                "tendo em vista que", "haja vista que", 
+                "considerando que"
             ],
             "sequenciais": [
-                "primeiramente", "em seguida", "por fim", "depois",
-                "anteriormente", "posteriormente", "finalmente",
-                "em primeiro lugar", "em segundo lugar", "por último"
+                "primeiramente", "em seguida", "por fim",
+                "em primeiro lugar", "em segundo lugar",
+                "finalmente", "em última análise"
             ],
             "comparativos": [
-                "assim como", "tal qual", "tanto quanto", "como",
-                "da mesma forma", "igualmente", "similarmente",
-                "do mesmo modo", "semelhantemente"
+                "assim como", "da mesma forma",
+                "similarmente", "analogamente",
+                "do mesmo modo"
             ],
             "enfáticos": [
-                "com efeito", "de fato", "realmente", "evidentemente",
-                "naturalmente", "decerto", "certamente", "sobretudo",
-                "principalmente", "especialmente"
+                "com efeito", "de fato", "evidentemente",
+                "sobretudo", "principalmente", "notadamente",
+                "especialmente"
             ]
         }
 
     def identificar_conectivos(self, texto: str) -> AnaliseConectivos:
+        """Identifica conectivos mais relevantes para o ENEM no texto."""
         conectivos_encontrados = []
         estatisticas = {}
         repeticoes = {}
@@ -383,7 +384,13 @@ class AnalisadorConectivos:
             estatisticas[tipo] = 0
             
             for conectivo in lista_conectivos:
-                posicoes = self._encontrar_todas_ocorrencias(texto_lower, conectivo)
+                # Verifica se o conectivo está cercado por espaços ou pontuação
+                padrao = rf'\b{re.escape(conectivo)}\b'
+                ocorrencias = re.finditer(padrao, texto_lower)
+                
+                posicoes = []
+                for match in ocorrencias:
+                    posicoes.append(match.start())
                 
                 if posicoes:
                     frequencia = len(posicoes)
@@ -410,62 +417,6 @@ class AnalisadorConectivos:
             score=score,
             feedback=feedback
         )
-
-    def _encontrar_todas_ocorrencias(self, texto: str, substring: str) -> List[int]:
-        posicoes = []
-        pos = texto.find(substring)
-        while pos != -1:
-            posicoes.append(pos)
-            pos = texto.find(substring, pos + 1)
-        return posicoes
-
-    def _calcular_score(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> float:
-        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
-        total_conectivos = sum(estatisticas.values())
-        
-        if total_conectivos == 0:
-            return 0.0
-        
-        # Base score pela variedade de tipos
-        score = tipos_usados / len(self.conectivos_por_tipo) * 0.5
-        
-        # Adiciona pontuação pela quantidade adequada
-        quantidade_ideal = 3  # Número ideal de conectivos por tipo
-        distribuicao = sum(
-            min(count / quantidade_ideal, 1.0) 
-            for count in estatisticas.values()
-        ) / len(self.conectivos_por_tipo)
-        score += distribuicao * 0.3
-        
-        # Penaliza repetições excessivas
-        penalidade_repeticoes = len(repeticoes) * 0.05
-        score = max(0.0, score - penalidade_repeticoes)
-        
-        return min(1.0, score)
-
-    def _gerar_feedback(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> List[str]:
-        feedback = []
-        
-        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
-        if tipos_usados >= 5:
-            feedback.append("✨ Excelente variedade de conectivos!")
-        elif tipos_usados >= 3:
-            feedback.append("✓ Boa variedade de conectivos.")
-        else:
-            feedback.append("💡 Procure utilizar mais tipos diferentes de conectivos.")
-        
-        for tipo, count in estatisticas.items():
-            if count == 0:
-                feedback.append(f"📌 Sugestão: Considere usar conectivos {tipo}.")
-            elif count > 4:
-                feedback.append(f"⚠️ Uso frequente de conectivos {tipo}.")
-        
-        if repeticoes:
-            feedback.append("🔄 Conectivos repetidos:")
-            for conectivo, freq in repeticoes.items():
-                feedback.append(f"  • '{conectivo}' usado {freq} vezes")
-        
-        return feedback
 
 # Funções de análise e display
 def detectar_tipo_paragrafo(texto: str, posicao: Optional[int] = None) -> str:
@@ -522,6 +473,10 @@ def destacar_argumentos(texto: str, argumentos: List[ArgumentoAnalise]) -> str:
     return texto_destacado
 
 def destacar_conectivos(texto: str, analise: AnaliseConectivos) -> str:
+    """Destaca conectivos no texto evitando sobreposição de marcações."""
+    if not analise.conectivos:
+        return texto
+        
     cores_tipo = {
         "aditivos": "#9C27B0",      # Roxo
         "adversativos": "#FF5722",   # Laranja
@@ -532,33 +487,79 @@ def destacar_conectivos(texto: str, analise: AnaliseConectivos) -> str:
         "enfáticos": "#FF9800"       # Laranja claro
     }
     
+    # Ordena conectivos por tamanho (maior primeiro) e posição
     conectivos_ordenados = sorted(
         analise.conectivos,
-        key=lambda x: x.posicao[0],
-        reverse=True
+        key=lambda x: (-len(x.texto), x.posicao[0])
     )
     
-    texto_destacado = texto
+    # Cria uma lista de posições já marcadas
+    marcacoes = []
+    texto_final = texto
+    
     for conectivo in conectivos_ordenados:
         inicio, fim = conectivo.posicao
-        texto_original = texto_destacado[inicio:fim]
         
-        tooltip = (
-            f"Tipo: {conectivo.tipo}\n"
-            f"Frequência: {conectivo.frequencia}x"
+        # Verifica se a posição já foi marcada
+        sobrepoe = any(
+            (m[0] <= inicio <= m[1]) or (m[0] <= fim <= m[1])
+            for m in marcacoes
         )
         
-        texto_destacado = (
-            texto_destacado[:inicio] +
-            f'<span style="background-color: {cores_tipo[conectivo.tipo]}33; '
-            f'border-bottom: 2px dashed {cores_tipo[conectivo.tipo]}; '
-            f'padding: 0 2px; cursor: help;" '
-            f'title="{tooltip}">'
-            f'{texto_original}</span>' +
-            texto_destacado[fim:]
-        )
+        if not sobrepoe:
+            texto_original = texto_final[inicio:fim]
+            # Evita marcar parte de palavras
+            if re.match(r'\b' + re.escape(texto_original.lower()) + r'\b', texto_original.lower()):
+                marcacao = (
+                    f'<span style="background-color: {cores_tipo[conectivo.tipo]}22; '
+                    f'border-bottom: 2px solid {cores_tipo[conectivo.tipo]}; '
+                    f'padding: 0 2px; cursor: help;" '
+                    f'title="Tipo: {conectivo.tipo}">'
+                    f'{texto_original}</span>'
+                )
+                texto_final = (
+                    texto_final[:inicio] +
+                    marcacao +
+                    texto_final[fim:]
+                )
+                marcacoes.append((inicio, fim))
     
-    return texto_destacado
+    return texto_final
+
+def mostrar_legenda_conectivos():
+    """Mostra a legenda das cores dos conectivos com exemplos relevantes."""
+    st.markdown("#### 🎨 Conectivos mais importantes no ENEM:")
+    
+    cores = {
+        "Aditivos (além disso, ademais...)": "#9C27B0",
+        "Adversativos (entretanto, contudo...)": "#FF5722",
+        "Conclusivos (portanto, dessa forma...)": "#673AB7",
+        "Explicativos (visto que, uma vez que...)": "#009688",
+        "Sequenciais (primeiramente, por fim...)": "#795548",
+        "Comparativos (assim como, analogamente...)": "#607D8B",
+        "Enfáticos (com efeito, sobretudo...)": "#FF9800"
+    }
+    
+    legenda_html = "<div style='display: flex; flex-wrap: wrap; gap: 10px;'>"
+    
+    for tipo, cor in cores.items():
+        legenda_html += f"""
+            <div style='
+                display: flex;
+                align-items: center;
+                margin: 5px;
+                background-color: {cor}22;
+                padding: 5px 10px;
+                border-radius: 3px;
+                border-bottom: 2px solid {cor};
+                font-size: 0.9em;
+            '>
+                <span>{tipo}</span>
+            </div>
+        """
+    
+    legenda_html += "</div>"
+    st.markdown(legenda_html, unsafe_allow_html=True)
 
 def marcar_erros_no_texto(texto: str, correcoes: CorrecaoGramatical) -> str:
     if not correcoes or not correcoes.sugestoes:
@@ -700,39 +701,6 @@ def mostrar_analise_conectivos(analise: AnaliseConectivos):
             '>{fb}</div>""",
             unsafe_allow_html=True
         )
-
-def mostrar_legenda_conectivos():
-    st.markdown("#### 🎨 Legenda de Conectivos")
-    
-    cores = {
-        "Aditivos": "#9C27B0",
-        "Adversativos": "#FF5722",
-        "Conclusivos": "#673AB7",
-        "Explicativos": "#009688",
-        "Sequenciais": "#795548",
-        "Comparativos": "#607D8B",
-        "Enfáticos": "#FF9800"
-    }
-    
-    legenda_html = "<div style='display: flex; flex-wrap: wrap; gap: 10px;'>"
-    
-    for tipo, cor in cores.items():
-        legenda_html += f"""
-            <div style='
-                display: flex;
-                align-items: center;
-                margin: 5px;
-                background-color: {cor}33;
-                padding: 5px 10px;
-                border-radius: 3px;
-                border-bottom: 2px dashed {cor};
-            '>
-                <span>{tipo}</span>
-            </div>
-        """
-    
-    legenda_html += "</div>"
-    st.markdown(legenda_html, unsafe_allow_html=True)
 
 def mostrar_correcoes_gramaticais(correcao: CorrecaoGramatical):
     if not correcao or not correcao.sugestoes:
