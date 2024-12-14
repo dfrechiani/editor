@@ -373,6 +373,64 @@ class AnalisadorConectivos:
             ]
         }
 
+    def _calcular_score(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> float:
+        """Calcula a pontuação para uso de conectivos."""
+        # Quantidade mínima esperada de tipos diferentes
+        min_tipos_esperados = 3
+        # Quantidade ideal de conectivos por parágrafo
+        conectivos_ideais_por_paragrafo = 4
+        
+        # Calcula quantidade de tipos usados
+        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
+        
+        # Base score pela variedade (50% da nota)
+        score_variedade = min(1.0, tipos_usados / min_tipos_esperados) * 0.5
+        
+        # Score pela quantidade (30% da nota)
+        total_conectivos = sum(estatisticas.values())
+        score_quantidade = min(1.0, total_conectivos / conectivos_ideais_por_paragrafo) * 0.3
+        
+        # Penalização por repetições (20% da nota)
+        penalidade_repeticoes = len(repeticoes) * 0.05
+        score_repeticoes = 0.2 - min(0.2, penalidade_repeticoes)
+        
+        score_final = score_variedade + score_quantidade + score_repeticoes
+        return min(1.0, max(0.0, score_final))
+
+    def _gerar_feedback(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> List[str]:
+        """Gera feedback específico sobre uso de conectivos."""
+        feedback = []
+        
+        # Feedback sobre variedade
+        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
+        if tipos_usados >= 4:
+            feedback.append("✨ Excelente variedade de conectivos!")
+        elif tipos_usados >= 2:
+            feedback.append("✓ Boa variedade de conectivos.")
+        else:
+            feedback.append("💡 Procure utilizar mais tipos diferentes de conectivos do ENEM.")
+        
+        # Feedback sobre distribuição
+        total_conectivos = sum(estatisticas.values())
+        if total_conectivos >= 6:
+            feedback.append("⚠️ Cuidado com o uso excessivo de conectivos.")
+        elif total_conectivos <= 1:
+            feedback.append("📌 Considere usar mais conectivos para melhorar a coesão.")
+        
+        # Feedback sobre tipos específicos ausentes
+        tipos_importantes = ["conclusivos", "explicativos"]
+        for tipo in tipos_importantes:
+            if estatisticas.get(tipo, 0) == 0:
+                feedback.append(f"💡 Sugestão: Utilize conectivos {tipo} para fortalecer sua argumentação.")
+        
+        # Feedback sobre repetições
+        if repeticoes:
+            feedback.append("🔄 Conectivos repetidos:")
+            for conectivo, freq in repeticoes.items():
+                feedback.append(f"  • '{conectivo}' usado {freq} vezes - considere variar")
+        
+        return feedback
+
     def identificar_conectivos(self, texto: str) -> AnaliseConectivos:
         """Identifica conectivos mais relevantes para o ENEM no texto."""
         conectivos_encontrados = []
