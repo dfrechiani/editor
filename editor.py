@@ -908,6 +908,256 @@ def aplicar_estilos():
         </style>
     """, unsafe_allow_html=True)
 
+def analisar_paragrafo_tempo_real(texto: str, tipo: str) -> AnaliseParagrafo:
+    try:
+        inicio = datetime.now()
+        
+        # Análise básica e IA
+        analise_basica = analisar_elementos_basicos(texto, tipo)
+        analise_ia = None
+        palavras = len(texto.split())
+        if MIN_PALAVRAS_IA <= palavras <= MAX_PALAVRAS_IA:
+            try:
+                future = thread_pool.submit(analisar_com_ia, texto, tipo)
+                analise_ia = future.result(timeout=API_TIMEOUT)
+            except Exception as e:
+                logger.warning(f"Falha na análise IA: {e}")
+        
+        analise_final = combinar_analises(analise_basica, analise_ia)
+        feedback = gerar_feedback_completo(analise_final, tipo, texto)
+        
+        # Análise de argumentos
+        analisador_args = AnalisadorArgumentos()
+        argumentos = analisador_args.identificar_argumentos(texto, tipo)
+        
+        # Análise de conectivos
+        analisador_conectivos = AnalisadorConectivos()
+        analise_conectivos = analisador_conectivos.identificar_conectivos(texto)
+        
+        # Verificação gramatical
+        verificador = VerificadorGramatical()
+        correcao_gramatical = verificador.verificar_texto(texto)
+        
+        tempo_analise = (datetime.now() - inicio).total_seconds()
+        
+        return AnaliseParagrafo(
+            tipo=tipo,
+            texto=texto,
+            elementos=analise_final,
+            feedback=feedback,
+            correcao_gramatical=correcao_gramatical,
+            argumentos=argumentos,
+            analise_conectivos=analise_conectivos,
+            tempo_analise=tempo_analise
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro na análise em tempo real: {e}")
+        return AnaliseParagrafo(
+            tipo=tipo,
+            texto=texto,
+            elementos=analise_basica,
+            feedback=gerar_feedback_basico(analise_basica, tipo),
+            correcao_gramatical=None,
+            argumentos=[],
+            analise_conectivos=None,
+            tempo_analise=0.0
+        )
+
+def gerar_feedback_basico(analise: AnaliseElementos, tipo: str) -> List[str]:
+    """Gera feedback básico quando não é possível realizar análise completa."""
+    feedback = []
+    
+    # Feedback sobre elementos
+    if analise.presentes:
+        feedback.append(f"✅ Elementos identificados: {', '.join(analise.presentes)}")
+    if analise.ausentes:
+        feedback.append(f"❌ Elementos ausentes: {', '.join(analise.ausentes)}")
+    
+    # Feedback simplificado baseado no score
+    if analise.score >= 0.8:
+        feedback.append("🌟 Bom desenvolvimento do parágrafo!")
+    elif analise.score >= 0.5:
+        feedback.append("📝 Desenvolvimento adequado, mas pode melhorar.")
+    else:
+        feedback.append("⚠️ Necessário desenvolver melhor o parágrafo.")
+    
+    return feedback
+
+def gerar_feedback_completo(analise: AnaliseElementos, tipo: str, texto: str) -> List[str]:
+    """Gera feedback detalhado combinando análise estrutural."""
+    feedback = []
+    
+    # Identifica elementos bem utilizados
+    if analise.presentes:
+        elementos_presentes = [e.replace("_", " ").title() for e in analise.presentes]
+        feedback.append(
+            f"✅ Elementos bem desenvolvidos: {', '.join(elementos_presentes)}"
+        )
+    
+    # Identifica elementos que precisam melhorar
+    if analise.ausentes:
+        elementos_ausentes = [e.replace("_", " ").title() for e in analise.ausentes]
+        feedback.append(
+            f"❌ Elementos a melhorar: {', '.join(elementos_ausentes)}"
+        )
+    
+    # Mensagens específicas por tipo de parágrafo
+    if tipo == "introducao":
+        if analise.score >= 0.6:
+            feedback.append("✨ Boa contextualização do tema e apresentação do problema.")
+        else:
+            feedback.append("💡 Procure contextualizar melhor o tema e apresentar claramente sua tese.")
+    elif "desenvolvimento" in tipo:
+        if analise.score >= 0.6:
+            feedback.append("✨ Argumentação bem estruturada com bom uso de exemplos.")
+        else:
+            feedback.append("💡 Fortaleça seus argumentos com mais exemplos e explicações.")
+    elif tipo == "conclusao":
+        if analise.score >= 0.6:
+            feedback.append("✨ Proposta de intervenção bem elaborada.")
+        else:
+            feedback.append("💡 Desenvolva melhor sua proposta de intervenção com agentes e ações claras.")
+    
+    # Adiciona sugestões específicas
+    for sugestao in analise.sugestoes:
+        feedback.append(f"💡 {sugestao}")
+    
+    return feedback
+
+# Markers para análise estrutural
+MARKERS = {
+    "introducao": {
+        "contexto": [
+            "atualmente", "nos dias de hoje", "na sociedade contemporânea",
+            "no cenário atual", "no contexto", "diante", "perante",
+            "em meio a", "frente a", "segundo"
+        ],
+        "tese": [
+            "portanto", "assim", "dessa forma", "logo", "evidencia-se",
+            "torna-se", "é fundamental", "é necessário", "é preciso",
+            "deve-se considerar", "é importante destacar"
+        ],
+        "argumentos": [
+            "primeiro", "inicialmente", "primeiramente", "além disso",
+            "ademais", "outrossim", "não obstante", "por um lado",
+            "em primeiro lugar", "sobretudo"
+        ]
+    },
+    "desenvolvimento": {
+        "argumento": [
+            "com efeito", "de fato", "certamente", "evidentemente",
+            "naturalmente", "notadamente", "sobretudo", "principalmente",
+            "especialmente", "particularmente"
+        ],
+        "justificativa": [
+            "uma vez que", "visto que", "já que", "pois", "porque",
+            "posto que", "considerando que", "tendo em vista que",
+            "em virtude de", "devido a"
+        ],
+        "repertorio": [
+            "segundo", "conforme", "de acordo com", "como afirma",
+            "como aponta", "como evidencia", "como mostra",
+            "segundo dados", "pesquisas indicam", "estudos mostram"
+        ],
+        "conclusao": [
+            "portanto", "assim", "dessa forma", "logo", "por conseguinte",
+            "consequentemente", "destarte", "sendo assim",
+            "desse modo", "diante disso"
+        ]
+    },
+    "conclusao": {
+        "agente": [
+            "governo", "estado", "ministério", "secretaria", "município",
+            "instituições", "organizações", "sociedade civil",
+            "poder público", "autoridades"
+        ],
+        "acao": [
+            "criar", "implementar", "desenvolver", "promover", "estabelecer",
+            "formar", "construir", "realizar", "elaborar", "instituir",
+            "fomentar", "incentivar"
+        ],
+        "modo": [
+            "por meio de", "através de", "mediante", "por intermédio de",
+            "com base em", "utilizando", "a partir de", "por meio da",
+            "com o auxílio de", "valendo-se de"
+        ],
+        "finalidade": [
+            "a fim de", "para que", "com o objetivo de", "visando",
+            "com a finalidade de", "de modo a", "no intuito de",
+            "objetivando", "com o propósito de", "almejando"
+        ]
+    }
+}
+
+def analisar_elementos_basicos(texto: str, tipo: str) -> AnaliseElementos:
+    """Realiza análise básica dos elementos do texto."""
+    try:
+        texto_lower = texto.lower()
+        elementos_presentes = []
+        elementos_ausentes = []
+        
+        # Remove números do tipo para mapear corretamente
+        tipo_base = tipo.replace("1", "").replace("2", "")
+        
+        # Verifica presença de markers
+        markers = MARKERS[tipo_base]
+        for elemento, lista_markers in markers.items():
+            encontrado = False
+            for marker in lista_markers:
+                if marker in texto_lower:
+                    elementos_presentes.append(elemento)
+                    encontrado = True
+                    break
+            if not encontrado:
+                elementos_ausentes.append(elemento)
+        
+        # Calcula score baseado na presença de elementos
+        total_elementos = len(markers)
+        elementos_encontrados = len(elementos_presentes)
+        score = elementos_encontrados / total_elementos if total_elementos > 0 else 0.0
+        
+        # Gera sugestões para elementos ausentes
+        sugestoes = []
+        for elemento in elementos_ausentes:
+            if elemento in SUGESTOES_RAPIDAS:
+                sugestoes.append(SUGESTOES_RAPIDAS[elemento][0])
+        
+        return AnaliseElementos(
+            presentes=elementos_presentes,
+            ausentes=elementos_ausentes,
+            score=score,
+            sugestoes=sugestoes
+        )
+        
+    except Exception as e:
+        logger.error(f"Erro na análise básica: {e}")
+        return AnaliseElementos(
+            presentes=[],
+            ausentes=[],
+            score=0.0,
+            sugestoes=["Não foi possível analisar o texto. Tente novamente."]
+        )
+
+# Sugestões rápidas para cada elemento
+SUGESTOES_RAPIDAS = {
+    "contexto": [
+        "Desenvolva melhor o contexto histórico ou social do tema",
+        "Relacione o tema com a atualidade de forma mais específica",
+        "Apresente dados ou informações que contextualizem o tema"
+    ],
+    "tese": [
+        "Apresente seu ponto de vista de forma mais clara e direta",
+        "Defina melhor sua posição sobre o tema",
+        "Explicite sua opinião sobre a problemática apresentada"
+    ],
+    "argumentos": [
+        "Fortaleça seus argumentos com exemplos concretos",
+        "Desenvolva melhor a fundamentação dos argumentos",
+        "Apresente evidências que suportem seu ponto de vista"
+    ],
+}
+
 def main():
     try:
         # Configurações iniciais
