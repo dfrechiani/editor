@@ -25,13 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuração da página Streamlit
-st.set_page_config(
-    page_title="Tutor de Redação ENEM",
-    page_icon="📝",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+
 
 # Estilos CSS personalizados
 st.markdown("""
