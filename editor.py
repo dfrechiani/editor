@@ -1,22 +1,22 @@
 import streamlit as st
-import logging
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
-from datetime import datetime
+import openai
 import json
-from openai import OpenAI
-import re
-from concurrent.futures import ThreadPoolExecutor
+import logging
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 from enum import Enum
-import language_tool_python
-import concurrent.futures
-
-# Configuração da página
-st.set_page_config(
-    page_title="Editor Interativo de Redação ENEM",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Any, Tuple
+from datetime import datetime
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import re
+import time
+from pathlib import Path
+import base64
+from io import BytesIO
 
 # Configuração de logging
 logging.basicConfig(
@@ -25,1704 +25,2380 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Classes de dados básicas
-@dataclass
-class AnaliseElementos:
-    presentes: List[str]
-    ausentes: List[str]
-    score: float
-    sugestoes: List[str]
+# Configuração da página Streamlit
+st.set_page_config(
+    page_title="Tutor de Redação ENEM",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Estilos CSS personalizados
+st.markdown("""
+    <style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1E88E5;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .competencia-card {
+        background-color: #f0f2f6;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+    }
+    .feedback-box {
+        background-color: #e3f2fd;
+        padding: 1rem;
+        border-radius: 5px;
+        margin: 0.5rem 0;
+    }
+    .score-text {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #1E88E5;
+    }
+    .annotation {
+        background-color: rgba(255, 220, 100, 0.2);
+        border-bottom: 2px solid #ffd700;
+        cursor: help;
+        position: relative;
+    }
+    .tooltip {
+        visibility: hidden;
+        background-color: #333;
+        color: white;
+        text-align: center;
+        padding: 5px;
+        border-radius: 6px;
+        position: absolute;
+        z-index: 1;
+        bottom: 100%;
+        left: 50%;
+        margin-left: -60px;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    .annotation:hover .tooltip {
+        visibility: visible;
+        opacity: 1;
+    }
+    .sidebar-content {
+        padding: 1rem;
+    }
+    .exercise-card {
+        background-color: #ffffff;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 1rem 0;
+    }
+    .progress-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+    }
+    .metric-container {
+        text-align: center;
+        padding: 1rem;
+    }
+    .feedback-positive {
+        color: #28a745;
+    }
+    .feedback-negative {
+        color: #dc3545;
+    }
+    .feedback-neutral {
+        color: #6c757d;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Enums e Classes Base
+class NivelAluno(Enum):
+    INICIANTE = "iniciante"
+    INTERMEDIARIO = "intermediario"
+    AVANCADO = "avancado"
+
+class CompetenciaModulo(Enum):
+    NORMA_CULTA = "competencia1"
+    INTERPRETACAO = "competencia2" 
+    ARGUMENTACAO = "competencia3"
+    COESAO = "competencia4"
+    PROPOSTA = "competencia5"
 
 @dataclass
-class CorrecaoGramatical:
-    texto_original: str
-    sugestoes: List[dict]
-    total_erros: int
-    categorias_erros: dict
-    texto_corrigido: Optional[str] = None
+class ProgressoCompetencia:
+    nivel: float  # 0 a 1
+    exercicios_feitos: int
+    ultima_avaliacao: float  # 0 a 1
+    pontos_fortes: List[str]
+    pontos_fracos: List[str]
+    data_atualizacao: datetime
 
 @dataclass
-class ConectivoAnalise:
+class Redacao:
+    tema: str
     texto: str
+    data: datetime
+    notas: Dict[CompetenciaModulo, float]
+    feedback: Dict[CompetenciaModulo, List[str]]
+    versao: int = 1
+
+@dataclass
+class PerfilAluno:
+    nome: str
+    nivel: NivelAluno
+    data_inicio: datetime
+    progresso_competencias: Dict[CompetenciaModulo, ProgressoCompetencia]
+    historico_redacoes: List[Redacao]
+    feedback_acumulado: Dict[CompetenciaModulo, List[str]]
+    ultima_atividade: datetime
+    total_exercicios: int = 0
+    medalhas: List[str] = None
+
+@dataclass
+class ExercicioRedacao:
     tipo: str
-    posicao: Tuple[int, int]
-    frequencia: int
+    competencia: CompetenciaModulo
+    nivel: NivelAluno
+    enunciado: str
+    instrucoes: List[str]
+    criterios: List[str]
+    exemplo_resposta: Optional[str] = None
+    dicas: List[str] = None
+    tempo_estimado: int = 15  # minutos
 
-@dataclass
-class ArgumentoAnalise:
-    texto: str
-    tipo: str  # "A1" ou "A2"
-    posicao: Tuple[int, int]  # início e fim do argumento no texto
-    score: float
-    feedback: List[str]
-    tratamento: dict  # detalhes do tratamento conforme critérios ENEM
+# Configurações e constantes
+MAX_RETRIES = 3
+API_TIMEOUT = 30.0
+CACHE_TTL = 3600  # 1 hora em segundos
 
-@dataclass
-class AnaliseConectivos:
-    conectivos: List[ConectivoAnalise]
-    estatisticas: Dict[str, int]
-    repeticoes: Dict[str, int]
-    score: float
-    feedback: List[str]
-
-@dataclass
-class AnaliseParagrafo:
-    tipo: str
-    texto: str
-    elementos: AnaliseElementos
-    feedback: List[str]
-    correcao_gramatical: Optional[CorrecaoGramatical] = None
-    argumentos: Optional[List[ArgumentoAnalise]] = None
-    analise_conectivos: Optional[AnaliseConectivos] = None
-    tempo_analise: float = 0.0
-
-# Configuração da API e modelos
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-class ModeloAnalise(str, Enum):
-    RAPIDO = "gpt-3.5-turbo-1106"
-
-# Configurações de processamento
-MAX_WORKERS = 3
-thread_pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-
-# Configurações de timeout e retry
-API_TIMEOUT = 10.0
-MAX_RETRIES = 2
-MIN_PALAVRAS_IA = 20
-MAX_PALAVRAS_IA = 300
-
-# Cache com TTL para melhor performance
-class CacheAnalise:
-    def __init__(self, max_size: int = 50, ttl_seconds: int = 180):
-        self.cache: Dict[str, Tuple[AnaliseElementos, datetime]] = {}
-        self.max_size = max_size
-        self.ttl_seconds = ttl_seconds
-    
-    def get(self, texto: str, tipo: str) -> Optional[AnaliseElementos]:
-        try:
-            chave = f"{tipo}:{hash(texto)}"
-            if chave in self.cache:
-                analise, timestamp = self.cache[chave]
-                if (datetime.now() - timestamp).seconds < self.ttl_seconds:
-                    return analise
-                del self.cache[chave]
-        except Exception as e:
-            logger.error(f"Erro ao acessar cache: {e}")
-        return None
-    
-    def set(self, texto: str, tipo: str, analise: AnaliseElementos) -> None:
-        try:
-            if len(self.cache) >= self.max_size:
-                agora = datetime.now()
-                expirados = [
-                    k for k, (_, t) in self.cache.items() 
-                    if (agora - t).seconds >= self.ttl_seconds
-                ]
-                for k in expirados:
-                    del self.cache[k]
-                
-                if len(self.cache) >= self.max_size:
-                    mais_antigo = min(self.cache.items(), key=lambda x: x[1][1])
-                    del self.cache[mais_antigo[0]]
-            
-            self.cache[f"{tipo}:{hash(texto)}"] = (analise, datetime.now())
-        except Exception as e:
-            logger.error(f"Erro ao definir cache: {e}")
-
-class VerificadorGramatical:
+# Cache simples
+class Cache:
     def __init__(self):
-        try:
-            self.tool = language_tool_python.LanguageToolPublicAPI('pt-BR')
-            self.initialized = True
-        except Exception as e:
-            logger.error(f"Erro ao inicializar LanguageTool: {e}")
-            self.initialized = False
-            
-    def verificar_texto(self, texto: str) -> CorrecaoGramatical:
-        if not self.initialized:
-            return CorrecaoGramatical(
-                texto_original=texto,
-                sugestoes=[],
-                total_erros=0,
-                categorias_erros={},
-                texto_corrigido=None
+        self.data: Dict[str, Any] = {}
+        self.timestamps: Dict[str, datetime] = {}
+
+    def get(self, key: str) -> Optional[Any]:
+        if key in self.data:
+            if (datetime.now() - self.timestamps[key]).total_seconds() < CACHE_TTL:
+                return self.data[key]
+            else:
+                del self.data[key]
+                del self.timestamps[key]
+        return None
+
+    def set(self, key: str, value: Any):
+        self.data[key] = value
+        self.timestamps[key] = datetime.now()
+
+# Inicialização do cache global
+cache = Cache()
+
+# Classe base para gerenciamento de estado
+class EstadoManager:
+    @staticmethod
+    def init_session_state():
+        """Inicializa variáveis de estado da sessão"""
+        if 'perfil_aluno' not in st.session_state:
+            st.session_state.perfil_aluno = None
+        
+        if 'openai_client' not in st.session_state:
+            st.session_state.openai_client = openai.OpenAI(
+                api_key=st.secrets["OPENAI_API_KEY"]
             )
-            
-        try:
-            matches = self.tool.check(texto)
-            
-            sugestoes = []
-            categorias_erros = {}
-            texto_corrigido = texto
-            
-            for match in matches:
-                categoria = match.category
-                if categoria not in categorias_erros:
-                    categorias_erros[categoria] = 0
-                categorias_erros[categoria] += 1
-                
-                sugestao = {
-                    'erro': texto[match.offset:match.offset + match.errorLength],
-                    'sugestoes': match.replacements,
-                    'mensagem': match.message,
-                    'categoria': categoria,
-                    'contexto': self._get_context(texto, match.offset, match.errorLength),
-                    'posicao': match.offset
-                }
-                sugestoes.append(sugestao)
-                
-                if match.replacements:
-                    texto_corrigido = texto_corrigido.replace(
-                        texto[match.offset:match.offset + match.errorLength],
-                        match.replacements[0]
+        
+        if 'pagina_atual' not in st.session_state:
+            st.session_state.pagina_atual = "inicio"
+        
+        if 'ultima_analise' not in st.session_state:
+            st.session_state.ultima_analise = None
+        
+        if 'historico_exercicios' not in st.session_state:
+            st.session_state.historico_exercicios = []
+
+    @staticmethod
+    def salvar_perfil():
+        """Salva perfil do aluno (simulado - em produção usaria banco de dados)"""
+        if st.session_state.perfil_aluno:
+            st.session_state.perfil_aluno.ultima_atividade = datetime.now()
+
+    @staticmethod
+    def atualizar_progresso(competencia: CompetenciaModulo, nota: float):
+        """Atualiza o progresso em uma competência específica"""
+        if st.session_state.perfil_aluno:
+            if competencia not in st.session_state.perfil_aluno.progresso_competencias:
+                st.session_state.perfil_aluno.progresso_competencias[competencia] = \
+                    ProgressoCompetencia(
+                        nivel=0.0,
+                        exercicios_feitos=0,
+                        ultima_avaliacao=0.0,
+                        pontos_fortes=[],
+                        pontos_fracos=[],
+                        data_atualizacao=datetime.now()
                     )
             
-            return CorrecaoGramatical(
-                texto_original=texto,
-                sugestoes=sugestoes,
-                total_erros=len(sugestoes),
-                categorias_erros=categorias_erros,
-                texto_corrigido=texto_corrigido
-            )
-            
-        except Exception as e:
-            logger.error(f"Erro na verificação gramatical: {e}")
-            return CorrecaoGramatical(
-                texto_original=texto,
-                sugestoes=[],
-                total_erros=0,
-                categorias_erros={},
-                texto_corrigido=None
-            )
-    
-    def _get_context(self, texto: str, offset: int, length: int, context_size: int = 40) -> str:
-        start = max(0, offset - context_size)
-        end = min(len(texto), offset + length + context_size)
-        
-        context = texto[start:end]
-        if start > 0:
-            context = f"...{context}"
-        if end < len(texto):
-            context = f"{context}..."
-            
-        return context
+            progresso = st.session_state.perfil_aluno.progresso_competencias[competencia]
+            progresso.ultima_avaliacao = nota
+            progresso.data_atualizacao = datetime.now()
+            EstadoManager.salvar_perfil()
 
-class AnalisadorArgumentos:
-    def __init__(self):
-        self.marcadores_a1_a2 = {
-            "introducao": [
-                "primeiro", "inicialmente", "primeiramente", "por um lado",
-                "além disso", "ademais", "outrossim", "por outro lado",
-                "soma-se a isso", "adiciona-se a isso"
-            ],
-            "desenvolvimento": [
-                "com efeito", "de fato", "certamente", "evidentemente",
-                "sob essa perspectiva", "nesse sentido", "diante disso",
-                "à luz dessa", "sob esse aspecto"
-            ]
-        }
-        
-        self.criterios_tratamento = {
-            "desenvolvimento1": {
-                "argumentacao": ["citação direta", "dados estatísticos", "fatos históricos"],
-                "justificativa": ["explicação", "exemplificação", "causa-consequência"],
-                "repertorio": ["obras literárias", "filosofia", "sociologia", "atualidades"]
-            },
-            "desenvolvimento2": {
-                "argumentacao": ["comparação", "analogia", "contraposição"],
-                "justificativa": ["contextualização", "análise", "relação"],
-                "repertorio": ["cinema", "artes", "ciências", "tecnologia"]
-            }
-        }
+# Classe base para análise de texto
+class AnalisadorTexto:
+    def __init__(self, client: openai.OpenAI):
+        self.client = client
+        self.cache = Cache()
 
-    def identificar_argumentos(self, texto: str, tipo_paragrafo: str) -> List[ArgumentoAnalise]:
-        argumentos = []
-        texto_lower = texto.lower()
-        
-        marcadores = self.marcadores_a1_a2.get(
-            "introducao" if tipo_paragrafo == "introducao" else "desenvolvimento",
-            []
-        )
-        
-        for i, marcador in enumerate(marcadores):
-            pos = texto_lower.find(marcador)
-            if pos >= 0:
-                fim = len(texto)
-                for next_marcador in marcadores[i+1:]:
-                    next_pos = texto_lower.find(next_marcador)
-                    if next_pos > pos:
-                        fim = next_pos
-                        break
-                
-                tipo_arg = "A1" if not argumentos else "A2"
-                
-                argumento = ArgumentoAnalise(
-                    texto=texto[pos:fim].strip(),
-                    tipo=tipo_arg,
-                    posicao=(pos, fim),
-                    score=self.avaliar_argumento(texto[pos:fim], tipo_paragrafo),
-                    feedback=self.gerar_feedback_argumento(texto[pos:fim], tipo_paragrafo),
-                    tratamento=self.analisar_tratamento(texto[pos:fim], tipo_paragrafo)
-                )
-                argumentos.append(argumento)
-                
-                if len(argumentos) >= 2:
-                    break
-        
-        return argumentos
-    def avaliar_argumento(self, texto: str, tipo_paragrafo: str) -> float:
-        score = 0.0
-        criterios = self.criterios_tratamento.get(tipo_paragrafo, {})
-        
-        for categoria, elementos in criterios.items():
-            for elemento in elementos:
-                if any(marker in texto.lower() for marker in self.get_markers_for_element(elemento)):
-                    score += 0.25
-        
-        return min(1.0, score)
-
-    def analisar_tratamento(self, texto: str, tipo_paragrafo: str) -> dict:
-        tratamento = {}
-        criterios = self.criterios_tratamento.get(tipo_paragrafo, {})
-        
-        for categoria, elementos in criterios.items():
-            presentes = []
-            for elemento in elementos:
-                if any(marker in texto.lower() for marker in self.get_markers_for_element(elemento)):
-                    presentes.append(elemento)
-            if presentes:
-                tratamento[categoria] = presentes
-        
-        return tratamento
-
-    def gerar_feedback_argumento(self, texto: str, tipo_paragrafo: str) -> List[str]:
-        feedback = []
-        tratamento = self.analisar_tratamento(texto, tipo_paragrafo)
-        
-        for categoria, elementos in tratamento.items():
-            if elementos:
-                feedback.append(f"✓ Bom uso de {categoria} com {', '.join(elementos)}")
-        
-        criterios = self.criterios_tratamento.get(tipo_paragrafo, {})
-        for categoria, elementos in criterios.items():
-            if categoria not in tratamento:
-                feedback.append(f"💡 Sugestão: Inclua {categoria} usando {', '.join(elementos[:2])}")
-        
-        return feedback
-
-    def get_markers_for_element(self, elemento: str) -> List[str]:
-        markers_map = {
-            "citação direta": ["afirma", "declara", "segundo", "conforme"],
-            "dados estatísticos": ["porcentagem", "número", "taxa", "índice"],
-            "fatos históricos": ["história", "período", "época", "durante"],
-            "explicação": ["porque", "pois", "uma vez que", "já que"],
-            "exemplificação": ["exemplo", "como", "tal qual", "assim como"],
-            "causa-consequência": ["causa", "consequência", "efeito", "resultado"],
-            "obras literárias": ["livro", "obra", "romance", "autor"],
-            "filosofia": ["filósofo", "pensamento", "conceito", "teoria"],
-            "sociologia": ["sociedade", "social", "sociólogo", "fenômeno"],
-            "atualidades": ["atual", "recente", "hoje", "contemporâneo"],
-            "comparação": ["mais", "menos", "tanto quanto", "assim como"],
-            "analogia": ["similar", "semelhante", "análogo", "como"],
-            "contraposição": ["contrário", "oposto", "diferente", "enquanto"],
-            "contextualização": ["contexto", "cenário", "situação", "realidade"],
-            "análise": ["analisar", "examinar", "verificar", "observar"],
-            "relação": ["relacionar", "conectar", "vincular", "ligar"]
-        }
-        return markers_map.get(elemento, [elemento.lower()])
-
-class AnalisadorConectivos:
-    def __init__(self):
-        self.conectivos_por_tipo = {
-            "aditivos": [
-                "além disso", "ademais", "outrossim",
-                "não apenas... mas também", "inclusive",
-                "soma-se a isso", "igualmente"
-            ],
-            "adversativos": [
-                "entretanto", "no entanto", "todavia", 
-                "não obstante", "apesar de", "embora", 
-                "contudo", "porém"
-            ],
-            "conclusivos": [
-                "portanto", "dessa forma", "por conseguinte",
-                "consequentemente", "destarte", "sendo assim",
-                "desse modo", "diante disso"
-            ],
-            "explicativos": [
-                "visto que", "uma vez que", "posto que", 
-                "tendo em vista que", "haja vista que", 
-                "considerando que"
-            ],
-            "sequenciais": [
-                "primeiramente", "em seguida", "por fim",
-                "em primeiro lugar", "em segundo lugar",
-                "finalmente", "em última análise"
-            ],
-            "comparativos": [
-                "assim como", "da mesma forma",
-                "similarmente", "analogamente",
-                "do mesmo modo"
-            ],
-            "enfáticos": [
-                "com efeito", "de fato", "evidentemente",
-                "sobretudo", "principalmente", "notadamente",
-                "especialmente"
-            ]
-        }
-
-    def _calcular_score(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> float:
-        """Calcula a pontuação para uso de conectivos."""
-        # Quantidade mínima esperada de tipos diferentes
-        min_tipos_esperados = 3
-        # Quantidade ideal de conectivos por parágrafo
-        conectivos_ideais_por_paragrafo = 4
-        
-        # Calcula quantidade de tipos usados
-        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
-        
-        # Base score pela variedade (50% da nota)
-        score_variedade = min(1.0, tipos_usados / min_tipos_esperados) * 0.5
-        
-        # Score pela quantidade (30% da nota)
-        total_conectivos = sum(estatisticas.values())
-        score_quantidade = min(1.0, total_conectivos / conectivos_ideais_por_paragrafo) * 0.3
-        
-        # Penalização por repetições (20% da nota)
-        penalidade_repeticoes = len(repeticoes) * 0.05
-        score_repeticoes = 0.2 - min(0.2, penalidade_repeticoes)
-        
-        score_final = score_variedade + score_quantidade + score_repeticoes
-        return min(1.0, max(0.0, score_final))
-
-    def _gerar_feedback(self, estatisticas: Dict[str, int], repeticoes: Dict[str, int]) -> List[str]:
-        """Gera feedback específico sobre uso de conectivos."""
-        feedback = []
-        
-        # Feedback sobre variedade
-        tipos_usados = sum(1 for count in estatisticas.values() if count > 0)
-        if tipos_usados >= 4:
-            feedback.append("✨ Excelente variedade de conectivos!")
-        elif tipos_usados >= 2:
-            feedback.append("✓ Boa variedade de conectivos.")
-        else:
-            feedback.append("💡 Procure utilizar mais tipos diferentes de conectivos do ENEM.")
-        
-        # Feedback sobre distribuição
-        total_conectivos = sum(estatisticas.values())
-        if total_conectivos >= 6:
-            feedback.append("⚠️ Cuidado com o uso excessivo de conectivos.")
-        elif total_conectivos <= 1:
-            feedback.append("📌 Considere usar mais conectivos para melhorar a coesão.")
-        
-        # Feedback sobre tipos específicos ausentes
-        tipos_importantes = ["conclusivos", "explicativos"]
-        for tipo in tipos_importantes:
-            if estatisticas.get(tipo, 0) == 0:
-                feedback.append(f"💡 Sugestão: Utilize conectivos {tipo} para fortalecer sua argumentação.")
-        
-        # Feedback sobre repetições
-        if repeticoes:
-            feedback.append("🔄 Conectivos repetidos:")
-            for conectivo, freq in repeticoes.items():
-                feedback.append(f"  • '{conectivo}' usado {freq} vezes - considere variar")
-        
-        return feedback
-
-    def identificar_conectivos(self, texto: str) -> AnaliseConectivos:
-        """Identifica conectivos mais relevantes para o ENEM no texto."""
-        conectivos_encontrados = []
-        estatisticas = {}
-        repeticoes = {}
-        texto_lower = texto.lower()
-        
-        for tipo, lista_conectivos in self.conectivos_por_tipo.items():
-            estatisticas[tipo] = 0
-            
-            for conectivo in lista_conectivos:
-                # Verifica se o conectivo está cercado por espaços ou pontuação
-                padrao = rf'\b{re.escape(conectivo)}\b'
-                ocorrencias = re.finditer(padrao, texto_lower)
-                
-                posicoes = []
-                for match in ocorrencias:
-                    posicoes.append(match.start())
-                
-                if posicoes:
-                    frequencia = len(posicoes)
-                    estatisticas[tipo] += frequencia
-                    
-                    if frequencia > 1:
-                        repeticoes[conectivo] = frequencia
-                    
-                    for pos in posicoes:
-                        conectivos_encontrados.append(ConectivoAnalise(
-                            texto=texto[pos:pos + len(conectivo)],
-                            tipo=tipo,
-                            posicao=(pos, pos + len(conectivo)),
-                            frequencia=frequencia
-                        ))
-        
-        score = self._calcular_score(estatisticas, repeticoes)
-        feedback = self._gerar_feedback(estatisticas, repeticoes)
-        
-        return AnaliseConectivos(
-            conectivos=conectivos_encontrados,
-            estatisticas=estatisticas,
-            repeticoes=repeticoes,
-            score=score,
-            feedback=feedback
-        )
-
-# Funções de análise e display
-def detectar_tipo_paragrafo(texto: str, posicao: Optional[int] = None) -> str:
-    try:
-        if posicao is not None:
-            if posicao == 0:
-                return "introducao"
-            elif posicao in [1, 2]:
-                return f"desenvolvimento{posicao}"
-            elif posicao == 3:
-                return "conclusao"
-        
-        texto_lower = texto.lower()
-        
-        # Verifica conclusão primeiro (mais distintivo)
-        if any(marker in texto_lower for marker in MARKERS["conclusao"]["agente"]) or \
-           any(marker in texto_lower for marker in MARKERS["conclusao"]["acao"]):
-            return "conclusao"
-            
-        # Verifica introdução
-        if any(marker in texto_lower for marker in MARKERS["introducao"]["contexto"]) or \
-           any(marker in texto_lower for marker in MARKERS["introducao"]["tese"]):
-            return "introducao"
-        
-        # Default para desenvolvimento
-        return "desenvolvimento1"
-        
-    except Exception as e:
-        logger.error(f"Erro na detecção do tipo de parágrafo: {e}")
-        return "desenvolvimento1"
-
-def destacar_argumentos(texto: str, argumentos: List[ArgumentoAnalise]) -> str:
-    cores = {
-        "A1": "#4CAF50",  # Verde
-        "A2": "#2196F3"   # Azul
-    }
-    
-    argumentos_ordenados = sorted(argumentos, key=lambda x: x.posicao[0], reverse=True)
-    texto_destacado = texto
-    
-    for arg in argumentos_ordenados:
-        inicio, fim = arg.posicao
-        texto_original = texto_destacado[inicio:fim]
-        texto_destacado = (
-            texto_destacado[:inicio] +
-            f'<span style="background-color: {cores[arg.tipo]}33; '
-            f'border-left: 3px solid {cores[arg.tipo]}; '
-            f'padding: 2px 5px; margin: 2px 0; display: inline-block;" '
-            f'title="Qualidade do argumento: {int(arg.score * 100)}%">'
-            f'{texto_original}</span>' +
-            texto_destacado[fim:]
-        )
-    
-    return texto_destacado
-
-def destacar_conectivos(texto: str, analise: AnaliseConectivos) -> str:
-    """Destaca conectivos no texto com marcação HTML mais robusta."""
-    if not analise.conectivos:
-        return texto
-        
-    cores_tipo = {
-        "aditivos": "#9C27B0",      # Roxo
-        "adversativos": "#FF5722",   # Laranja
-        "conclusivos": "#673AB7",    # Roxo escuro
-        "explicativos": "#009688",   # Verde água
-        "sequenciais": "#795548",    # Marrom
-        "comparativos": "#607D8B",   # Azul acinzentado
-        "enfáticos": "#FF9800"       # Laranja claro
-    }
-    
-    # Prepara lista de posições e marcações
-    marcacoes = []
-    for conectivo in analise.conectivos:
-        inicio, fim = conectivo.posicao
-        cor = cores_tipo.get(conectivo.tipo, "#666666")
-        texto_original = texto[inicio:fim]
-        
-        marcacao = {
-            "inicio": inicio,
-            "fim": fim,
-            "tipo": conectivo.tipo,
-            "texto": texto_original,
-            "cor": cor,
-            "frequencia": conectivo.frequencia
-        }
-        marcacoes.append(marcacao)
-    
-    # Ordena marcações do fim para o início
-    marcacoes.sort(key=lambda x: (x["inicio"], -len(x["texto"])), reverse=True)
-    
-    # Aplica marcações
-    texto_final = texto
-    posicoes_marcadas = set()
-    
-    for marcacao in marcacoes:
-        inicio = marcacao["inicio"]
-        fim = marcacao["fim"]
-        
-        # Verifica se a posição já foi marcada
-        range_atual = set(range(inicio, fim))
-        if not range_atual.intersection(posicoes_marcadas):
-            html = (
-                f'<span class="conectivo" '
-                f'style="'
-                f'background-color: {marcacao["cor"]}22; '
-                f'border-bottom: 2px solid {marcacao["cor"]}; '
-                f'padding: 0 2px; '
-                f'margin: 0 1px; '
-                f'border-radius: 2px; '
-                f'cursor: help;" '
-                f'title="Tipo: {marcacao["tipo"].title()}'
-                f'{" | Usado: " + str(marcacao["frequencia"]) + "x" if marcacao["frequencia"] > 1 else ""}'
-                f'">'
-                f'{marcacao["texto"]}'
-                f'</span>'
-            )
-            
-            texto_final = (
-                texto_final[:inicio] +
-                html +
-                texto_final[fim:]
-            )
-            
-            posicoes_marcadas.update(range_atual)
-    
-    return texto_final
-
-def mostrar_legenda_conectivos():
-    """Mostra a legenda das cores dos conectivos com exemplos relevantes."""
-    st.markdown("#### 🎨 Conectivos mais importantes no ENEM:")
-    
-    cores = {
-        "Aditivos (além disso, ademais...)": "#9C27B0",
-        "Adversativos (entretanto, contudo...)": "#FF5722",
-        "Conclusivos (portanto, dessa forma...)": "#673AB7",
-        "Explicativos (visto que, uma vez que...)": "#009688",
-        "Sequenciais (primeiramente, por fim...)": "#795548",
-        "Comparativos (assim como, analogamente...)": "#607D8B",
-        "Enfáticos (com efeito, sobretudo...)": "#FF9800"
-    }
-    
-    legenda_html = "<div style='display: flex; flex-wrap: wrap; gap: 10px;'>"
-    
-    for tipo, cor in cores.items():
-        legenda_html += f"""
-            <div style='
-                display: flex;
-                align-items: center;
-                margin: 5px;
-                background-color: {cor}22;
-                padding: 5px 10px;
-                border-radius: 3px;
-                border-bottom: 2px solid {cor};
-                font-size: 0.9em;
-            '>
-                <span>{tipo}</span>
-            </div>
-        """
-    
-    legenda_html += "</div>"
-    st.markdown(legenda_html, unsafe_allow_html=True)
-
-def marcar_erros_no_texto(texto: str, correcoes: CorrecaoGramatical) -> str:
-    if not correcoes or not correcoes.sugestoes:
-        return texto
-    
-    sugestoes_ordenadas = sorted(
-        correcoes.sugestoes,
-        key=lambda x: x['posicao'],
-        reverse=True
-    )
-    
-    texto_marcado = texto
-    for sugestao in sugestoes_ordenadas:
-        erro = sugestao['erro']
-        posicao = sugestao['posicao']
-        sugestao_texto = sugestao['sugestoes'][0] if sugestao['sugestoes'] else ''
-        marcacao = f'<span style="background-color: rgba(255, 107, 107, 0.3); border-bottom: 2px dashed #ff6b6b; cursor: help;" title="Sugestão: {sugestao_texto}">{erro}</span>'
-        texto_marcado = (
-            texto_marcado[:posicao] +
-            marcacao +
-            texto_marcado[posicao + len(erro):]
-        )
-    
-    return texto_marcado
-
-def mostrar_analise_argumentos(argumentos: List[ArgumentoAnalise]):
-    if not argumentos:
-        st.info("Nenhum argumento identificado neste parágrafo.")
-        return
-        
-    for arg in argumentos:
-        with st.expander(f"📝 Análise do {arg.tipo}", expanded=True):
-            # Score do argumento
-            st.markdown(
-                f"""<div style='
-                    background-color: #1a472a;
-                    padding: 10px;
-                    border-radius: 5px;
-                    margin: 5px 0;
-                '>
-                    <h4>Qualidade do Argumento: {int(arg.score * 100)}%</h4>
-                </div>""",
-                unsafe_allow_html=True
-            )
-            
-            # Tratamento do argumento
-            if arg.tratamento:
-                st.markdown("#### 🎯 Elementos Identificados")
-                for categoria, elementos in arg.tratamento.items():
-                    st.markdown(
-                        f"""<div style='
-                            background-color: #262730;
-                            padding: 10px;
-                            border-radius: 5px;
-                            margin: 5px 0;
-                        '>
-                            <p><strong>{categoria.title()}:</strong></p>
-                            <p>{', '.join(elementos)}</p>
-                        </div>""",
-                        unsafe_allow_html=True
-                    )
-            
-            # Feedback
-            st.markdown("#### 💡 Feedback")
-            for fb in arg.feedback:
-                st.markdown(
-                    f"""<div style='
-                        background-color: #1e2a3a;
-                        padding: 10px;
-                        border-radius: 5px;
-                        margin: 5px 0;
-                    '>{fb}</div>""",
-                    unsafe_allow_html=True
-                )
-
-def mostrar_analise_conectivos(analise: AnaliseConectivos):
-    st.markdown("### 🔄 Análise de Conectivos")
-    
-    # Métricas principais
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        total_conectivos = sum(analise.estatisticas.values())
-        st.metric("Total de Conectivos", total_conectivos)
-    
-    with col2:
-        tipos_usados = sum(1 for count in analise.estatisticas.values() if count > 0)
-        st.metric("Tipos Diferentes", tipos_usados)
-    
-    with col3:
-        st.metric(
-            "Qualidade do Uso",
-            f"{int(analise.score * 100)}%",
-            delta="Bom" if analise.score >= 0.7 else None
-        )
-    
-    # Distribuição por tipo
-    st.markdown("#### 📊 Distribuição por Tipo")
-    
-    # Dados para o gráfico
-    dados_grafico = [
-        {"tipo": tipo, "quantidade": qtd}
-        for tipo, qtd in analise.estatisticas.items()
-        if qtd > 0  # Só mostra tipos que foram usados
-    ]
-    
-    if dados_grafico:
-        st.bar_chart(dados_grafico)
-    
-    # Análise de repetições
-    if analise.repeticoes:
-        st.markdown("#### 🔄 Conectivos Repetidos")
-        for conectivo, freq in analise.repeticoes.items():
-            st.markdown(
-                f"""<div style='
-                    background-color: #1e2a3a;
-                    padding: 10px;
-                    border-radius: 5px;
-                    margin: 5px 0;
-                '>
-                    <p><strong>'{conectivo}'</strong> usado {freq} vezes</p>
-                </div>""",
-                unsafe_allow_html=True
-            )
-    
-    # Feedback e sugestões
-    st.markdown("#### 💡 Feedback e Sugestões")
-    for fb in analise.feedback:
-        bg_color = "#1a472a" if "✨" in fb or "✓" in fb else "#262730"
-        if "⚠️" in fb:
-            bg_color = "#4a1919"
-        
-        st.markdown(
-            f"""<div style='
-                background-color: {bg_color};
-                padding: 10px;
-                border-radius: 5px;
-                margin: 5px 0;
-            '>{fb}</div>""",
-            unsafe_allow_html=True
-        )
-
-def mostrar_correcoes_gramaticais(correcao: CorrecaoGramatical):
-    if not correcao or not correcao.sugestoes:
-        st.success("✓ Não foram encontrados erros gramaticais significativos.")
-        return
-        
-    st.markdown("### 📝 Correções Gramaticais")
-    
-    # Resumo dos erros
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Total de correções sugeridas", correcao.total_erros)
-    with col2:
-        categorias = sorted(
-            correcao.categorias_erros.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-        if categorias:
-            st.markdown("**Principais categorias:**")
-            for categoria, count in categorias[:3]:
-                st.markdown(f"- {categoria}: {count}")
-    
-    # Detalhamento das correções
-    with st.expander("Ver todas as correções sugeridas", expanded=True):
-        for i, sugestao in enumerate(correcao.sugestoes, 1):
-            st.markdown(
-                f"""<div style='
-                    background-color: #262730;
-                    padding: 10px;
-                    border-radius: 5px;
-                    margin: 5px 0;
-                '>
-                    <p><strong>Correção {i}:</strong></p>
-                    <p>🔍 Erro encontrado: "<span style='color: #ff6b6b'>{sugestao['erro']}</span>"</p>
-                    <p>✨ Sugestões: {', '.join(sugestao['sugestoes'][:3])}</p>
-                    <p>ℹ️ {sugestao['mensagem']}</p>
-                    <p>📍 Contexto: "{sugestao['contexto']}"</p>
-                </div>""",
-                unsafe_allow_html=True
-            )
-    
-    # Mostrar texto corrigido
-    if correcao.texto_corrigido:
-        with st.expander("Ver texto com correções aplicadas"):
-            st.markdown(
-                f"""<div style='
-                    background-color: #1a472a;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin: 10px 0;
-                '>{correcao.texto_corrigido}</div>""",
-                unsafe_allow_html=True
-            )
-
-def aplicar_estilos():
-    st.markdown("""
-        <style>
-        /* Reset de cores */
-        .stApp {
-            background-color: #0E1117;
-            color: #FAFAFA;
-        }
-        
-        /* Área de texto principal */
-        .stTextArea textarea {
-            font-family: 'Arial', sans-serif;
-            font-size: 16px;
-            line-height: 1.5;
-            background-color: #262730;
-            color: #FAFAFA !important;
-            border: 1px solid #464B5C;
-            border-radius: 5px;
-            padding: 10px;
-        }
-        
-        /* Box de texto analisado */
-        .texto-analise {
-            background-color: #FFFFFF;
-            color: #000000 !important;
-            padding: 15px;
-            border-radius: 5px;
-            font-family: Arial, sans-serif;
-            font-size: 16px;
-            line-height: 1.5;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        /* Barra de progresso personalizada */
-        .stProgress > div > div {
-            background-image: linear-gradient(to right, #dc3545, #ffc107, #28a745);
-            border-radius: 3px;
-            height: 20px;
-        }
-        
-        /* Expanders */
-        .streamlit-expanderHeader {
-            background-color: #262730;
-            color: #FAFAFA;
-            border-radius: 5px;
-            padding: 10px;
-            font-weight: bold;
-        }
-        
-        /* Mensagens de erro/sucesso */
-        .stAlert {
-            background-color: #262730;
-            border: 1px solid #464B5C;
-            border-radius: 5px;
-            padding: 10px;
-        }
-        
-        /* Títulos */
-        h1, h2, h3 {
-            color: #FAFAFA;
-            font-weight: bold;
-            margin-top: 20px;
-            margin-bottom: 10px;
-        }
-        
-        /* Links */
-        a {
-            color: #3498db;
-            text-decoration: none;
-        }
-        
-        a:hover {
-            color: #2980b9;
-            text-decoration: underline;
-        }
-        
-        /* Destaque de argumentos e conectivos */
-        .argumento-a1 {
-            background-color: rgba(76, 175, 80, 0.2);
-            border-left: 3px solid #4CAF50;
-            padding: 2px 5px;
-        }
-        
-        .argumento-a2 {
-            background-color: rgba(33, 150, 243, 0.2);
-            border-left: 3px solid #2196F3;
-            padding: 2px 5px;
-        }
-        
-        .conectivo {
-            border-bottom: 2px dashed;
-            padding: 0 2px;
-            cursor: help;
-        }
-        
-        /* Tooltips personalizados */
-        [title] {
-            position: relative;
-            cursor: help;
-        }
-        
-        [title]:hover::after {
-            content: attr(title);
-            position: absolute;
-            bottom: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 5px 10px;
-            background: #333;
-            color: white;
-            border-radius: 3px;
-            font-size: 14px;
-            white-space: nowrap;
-            z-index: 1000;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-def analisar_paragrafo_tempo_real(texto: str, tipo: str) -> AnaliseParagrafo:
-    try:
-        inicio = datetime.now()
-        
-        # Análise básica e IA
-        analise_basica = analisar_elementos_basicos(texto, tipo)
-        analise_ia = None
-        palavras = len(texto.split())
-        if MIN_PALAVRAS_IA <= palavras <= MAX_PALAVRAS_IA:
-            try:
-                future = thread_pool.submit(analisar_com_ia, texto, tipo)
-                analise_ia = future.result(timeout=API_TIMEOUT)
-            except Exception as e:
-                logger.warning(f"Falha na análise IA: {e}")
-        
-        analise_final = combinar_analises(analise_basica, analise_ia)
-        feedback = gerar_feedback_completo(analise_final, tipo, texto)
-        
-        # Análise de argumentos
-        analisador_args = AnalisadorArgumentos()
-        argumentos = analisador_args.identificar_argumentos(texto, tipo)
-        
-        # Análise de conectivos
-        analisador_conectivos = AnalisadorConectivos()
-        analise_conectivos = analisador_conectivos.identificar_conectivos(texto)
-        
-        # Verificação gramatical
-        verificador = VerificadorGramatical()
-        correcao_gramatical = verificador.verificar_texto(texto)
-        
-        tempo_analise = (datetime.now() - inicio).total_seconds()
-        
-        return AnaliseParagrafo(
-            tipo=tipo,
-            texto=texto,
-            elementos=analise_final,
-            feedback=feedback,
-            correcao_gramatical=correcao_gramatical,
-            argumentos=argumentos,
-            analise_conectivos=analise_conectivos,
-            tempo_analise=tempo_analise
-        )
-        
-    except Exception as e:
-        logger.error(f"Erro na análise em tempo real: {e}")
-        return AnaliseParagrafo(
-            tipo=tipo,
-            texto=texto,
-            elementos=analise_basica,
-            feedback=gerar_feedback_basico(analise_basica, tipo),
-            correcao_gramatical=None,
-            argumentos=[],
-            analise_conectivos=None,
-            tempo_analise=0.0
-        )
-
-def gerar_feedback_basico(analise: AnaliseElementos, tipo: str) -> List[str]:
-    """Gera feedback básico quando não é possível realizar análise completa."""
-    feedback = []
-    
-    # Feedback sobre elementos
-    if analise.presentes:
-        feedback.append(f"✅ Elementos identificados: {', '.join(analise.presentes)}")
-    if analise.ausentes:
-        feedback.append(f"❌ Elementos ausentes: {', '.join(analise.ausentes)}")
-    
-    # Feedback simplificado baseado no score
-    if analise.score >= 0.8:
-        feedback.append("🌟 Bom desenvolvimento do parágrafo!")
-    elif analise.score >= 0.5:
-        feedback.append("📝 Desenvolvimento adequado, mas pode melhorar.")
-    else:
-        feedback.append("⚠️ Necessário desenvolver melhor o parágrafo.")
-    
-    return feedback
-
-def gerar_feedback_completo(analise: AnaliseElementos, tipo: str, texto: str) -> List[str]:
-    """Gera feedback detalhado combinando análise estrutural."""
-    feedback = []
-    
-    # Identifica elementos bem utilizados
-    if analise.presentes:
-        elementos_presentes = [e.replace("_", " ").title() for e in analise.presentes]
-        feedback.append(
-            f"✅ Elementos bem desenvolvidos: {', '.join(elementos_presentes)}"
-        )
-    
-    # Identifica elementos que precisam melhorar
-    if analise.ausentes:
-        elementos_ausentes = [e.replace("_", " ").title() for e in analise.ausentes]
-        feedback.append(
-            f"❌ Elementos a melhorar: {', '.join(elementos_ausentes)}"
-        )
-    
-    # Mensagens específicas por tipo de parágrafo
-    if tipo == "introducao":
-        if analise.score >= 0.6:
-            feedback.append("✨ Boa contextualização do tema e apresentação do problema.")
-        else:
-            feedback.append("💡 Procure contextualizar melhor o tema e apresentar claramente sua tese.")
-    elif "desenvolvimento" in tipo:
-        if analise.score >= 0.6:
-            feedback.append("✨ Argumentação bem estruturada com bom uso de exemplos.")
-        else:
-            feedback.append("💡 Fortaleça seus argumentos com mais exemplos e explicações.")
-    elif tipo == "conclusao":
-        if analise.score >= 0.6:
-            feedback.append("✨ Proposta de intervenção bem elaborada.")
-        else:
-            feedback.append("💡 Desenvolva melhor sua proposta de intervenção com agentes e ações claras.")
-    
-    # Adiciona sugestões específicas
-    for sugestao in analise.sugestoes:
-        feedback.append(f"💡 {sugestao}")
-    
-    return feedback
-
-# Markers para análise estrutural
-MARKERS = {
-    "introducao": {
-        "contexto": [
-            "atualmente", "nos dias de hoje", "na sociedade contemporânea",
-            "no cenário atual", "no contexto", "diante", "perante",
-            "em meio a", "frente a", "segundo"
-        ],
-        "tese": [
-            "portanto", "assim", "dessa forma", "logo", "evidencia-se",
-            "torna-se", "é fundamental", "é necessário", "é preciso",
-            "deve-se considerar", "é importante destacar"
-        ],
-        "argumentos": [
-            "primeiro", "inicialmente", "primeiramente", "além disso",
-            "ademais", "outrossim", "não obstante", "por um lado",
-            "em primeiro lugar", "sobretudo"
-        ]
-    },
-    "desenvolvimento": {
-        "argumento": [
-            "com efeito", "de fato", "certamente", "evidentemente",
-            "naturalmente", "notadamente", "sobretudo", "principalmente",
-            "especialmente", "particularmente"
-        ],
-        "justificativa": [
-            "uma vez que", "visto que", "já que", "pois", "porque",
-            "posto que", "considerando que", "tendo em vista que",
-            "em virtude de", "devido a"
-        ],
-        "repertorio": [
-            "segundo", "conforme", "de acordo com", "como afirma",
-            "como aponta", "como evidencia", "como mostra",
-            "segundo dados", "pesquisas indicam", "estudos mostram"
-        ],
-        "conclusao": [
-            "portanto", "assim", "dessa forma", "logo", "por conseguinte",
-            "consequentemente", "destarte", "sendo assim",
-            "desse modo", "diante disso"
-        ]
-    },
-    "conclusao": {
-        "agente": [
-            "governo", "estado", "ministério", "secretaria", "município",
-            "instituições", "organizações", "sociedade civil",
-            "poder público", "autoridades"
-        ],
-        "acao": [
-            "criar", "implementar", "desenvolver", "promover", "estabelecer",
-            "formar", "construir", "realizar", "elaborar", "instituir",
-            "fomentar", "incentivar"
-        ],
-        "modo": [
-            "por meio de", "através de", "mediante", "por intermédio de",
-            "com base em", "utilizando", "a partir de", "por meio da",
-            "com o auxílio de", "valendo-se de"
-        ],
-        "finalidade": [
-            "a fim de", "para que", "com o objetivo de", "visando",
-            "com a finalidade de", "de modo a", "no intuito de",
-            "objetivando", "com o propósito de", "almejando"
-        ]
-    }
-}
-
-def analisar_elementos_basicos(texto: str, tipo: str) -> AnaliseElementos:
-    """Realiza análise básica dos elementos do texto."""
-    try:
-        texto_lower = texto.lower()
-        elementos_presentes = []
-        elementos_ausentes = []
-        
-        # Remove números do tipo para mapear corretamente
-        tipo_base = tipo.replace("1", "").replace("2", "")
-        
-        # Verifica presença de markers
-        markers = MARKERS[tipo_base]
-        for elemento, lista_markers in markers.items():
-            encontrado = False
-            for marker in lista_markers:
-                if marker in texto_lower:
-                    elementos_presentes.append(elemento)
-                    encontrado = True
-                    break
-            if not encontrado:
-                elementos_ausentes.append(elemento)
-        
-        # Calcula score baseado na presença de elementos
-        total_elementos = len(markers)
-        elementos_encontrados = len(elementos_presentes)
-        score = elementos_encontrados / total_elementos if total_elementos > 0 else 0.0
-        
-        # Gera sugestões para elementos ausentes
-        sugestoes = []
-        for elemento in elementos_ausentes:
-            if elemento in SUGESTOES_RAPIDAS:
-                sugestoes.append(SUGESTOES_RAPIDAS[elemento][0])
-        
-        return AnaliseElementos(
-            presentes=elementos_presentes,
-            ausentes=elementos_ausentes,
-            score=score,
-            sugestoes=sugestoes
-        )
-        
-    except Exception as e:
-        logger.error(f"Erro na análise básica: {e}")
-        return AnaliseElementos(
-            presentes=[],
-            ausentes=[],
-            score=0.0,
-            sugestoes=["Não foi possível analisar o texto. Tente novamente."]
-        )
-
-# Sugestões rápidas para cada elemento
-SUGESTOES_RAPIDAS = {
-    "contexto": [
-        "Desenvolva melhor o contexto histórico ou social do tema",
-        "Relacione o tema com a atualidade de forma mais específica",
-        "Apresente dados ou informações que contextualizem o tema"
-    ],
-    "tese": [
-        "Apresente seu ponto de vista de forma mais clara e direta",
-        "Defina melhor sua posição sobre o tema",
-        "Explicite sua opinião sobre a problemática apresentada"
-    ],
-    "argumentos": [
-        "Fortaleça seus argumentos com exemplos concretos",
-        "Desenvolva melhor a fundamentação dos argumentos",
-        "Apresente evidências que suportem seu ponto de vista"
-    ],
-}
-
-def analisar_com_ia(texto: str, tipo: str, retry_count: int = 0) -> Optional[AnaliseElementos]:
-    """Realiza análise usando IA com tratamento robusto de erros."""
-    if retry_count >= MAX_RETRIES or not client:
-        return None
-        
-    try:
-        prompt = f"""Analise este {tipo} de redação ENEM e retorne um JSON válido seguindo exatamente este formato, sem adicionar nada mais:
-
-{{
-    "elementos_presentes": ["elemento1", "elemento2"],
-    "elementos_ausentes": ["elemento3", "elemento4"],
-    "sugestoes": ["sugestão 1", "sugestão 2"]
-}}
-
-Texto para análise:
-{texto}"""
-
-        response = client.chat.completions.create(
-            model=ModeloAnalise.RAPIDO,
-            messages=[{
-                "role": "system",
-                "content": "Você é um analisador de redações que retorna apenas JSON válido sem nenhum texto adicional."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }],
-            temperature=0.3,
-            max_tokens=500,
-            timeout=API_TIMEOUT,
-            response_format={"type": "json_object"}
-        )
-        
-        try:
-            resposta_texto = response.choices[0].message.content.strip()
-            resposta_texto = resposta_texto[resposta_texto.find("{"):resposta_texto.rfind("}")+1]
-            
-            resultado = json.loads(resposta_texto)
-            
-            campos_obrigatorios = ["elementos_presentes", "elementos_ausentes", "sugestoes"]
-            if not all(campo in resultado for campo in campos_obrigatorios):
-                raise ValueError("Resposta JSON incompleta")
-                
-            return AnaliseElementos(
-                presentes=resultado["elementos_presentes"][:3],
-                ausentes=resultado["elementos_ausentes"][:3],
-                score=len(resultado["elementos_presentes"]) / (
-                    len(resultado["elementos_presentes"]) + len(resultado["elementos_ausentes"]) or 1
-                ),
-                sugestoes=resultado["sugestoes"][:2]
-            )
-            
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logger.warning(f"Erro no parsing da resposta IA: {e}. Tentativa {retry_count + 1}")
-            if retry_count < MAX_RETRIES:
-                from time import sleep
-                sleep(1)
-                return analisar_com_ia(texto, tipo, retry_count + 1)
-            return None
-            
-    except Exception as e:
-        logger.error(f"Erro na análise IA: {str(e)}")
-        return None
-
-def combinar_analises(analise_basica: AnaliseElementos, analise_ia: Optional[AnaliseElementos]) -> AnaliseElementos:
-    """Combina os resultados das análises básica e IA de forma ponderada."""
-    if not analise_ia:
-        return analise_basica
-    
-    try:
-        # Combina elementos presentes (união dos conjuntos)
-        elementos_presentes = list(set(analise_basica.presentes + analise_ia.presentes))
-        
-        # Combina elementos ausentes (interseção dos conjuntos)
-        elementos_ausentes = list(
-            set(analise_basica.ausentes).intersection(set(analise_ia.ausentes))
-        )
-        
-        # Média ponderada dos scores (60% básica, 40% IA)
-        score = (analise_basica.score * 0.6) + (analise_ia.score * 0.4)
-        
-        # Combina e prioriza sugestões
-        sugestoes_combinadas = []
-        
-        # Primeiro, adiciona sugestões que aparecem em ambas as análises
-        sugestoes_comuns = set(analise_basica.sugestoes).intersection(set(analise_ia.sugestoes))
-        sugestoes_combinadas.extend(list(sugestoes_comuns))
-        
-        # Depois, completa com sugestões únicas até o limite
-        sugestoes_restantes = set(analise_basica.sugestoes + analise_ia.sugestoes) - sugestoes_comuns
-        sugestoes_combinadas.extend(list(sugestoes_restantes)[:3 - len(sugestoes_combinadas)])
-        
-        return AnaliseElementos(
-            presentes=elementos_presentes,
-            ausentes=elementos_ausentes,
-            score=min(1.0, max(0.0, score)),  # Garante score entre 0 e 1
-            sugestoes=sugestoes_combinadas
-        )
-        
-    except Exception as e:
-        logger.error(f"Erro ao combinar análises: {e}")
-        return analise_basica
-
-def mostrar_analise_tempo_real(analise: AnaliseParagrafo):
-    """Exibe a análise completa em tempo real com todas as análises integradas."""
-    st.markdown(f"## Análise do {analise.tipo.title()}")
-    
-    # Layout principal
-    col_texto, col_analise = st.columns([0.6, 0.4])
-    
-    # Coluna do texto
-    with col_texto:
-        st.markdown("### 📝 Texto Analisado")
-        
-        # Aplica todas as marcações no texto
-        texto_final = analise.texto
-        
-        # 1. Destaca conectivos
-        if analise.analise_conectivos:
-            texto_final = destacar_conectivos(texto_final, analise.analise_conectivos)
-        
-        # 2. Destaca argumentos
-        if analise.argumentos:
-            texto_final = destacar_argumentos(texto_final, analise.argumentos)
-        
-        # 3. Marca erros gramaticais
-        if analise.correcao_gramatical and analise.correcao_gramatical.sugestoes:
-            texto_final = marcar_erros_no_texto(texto_final, analise.correcao_gramatical)
-        
-        # Exibe texto com todas as marcações
-        st.markdown(
-            f"""<div class='texto-analise'>{texto_final}</div>""",
-            unsafe_allow_html=True
-        )
-        
-        # Mostra legenda
-        mostrar_legenda_conectivos()
-    
-    # Coluna de análise
-    with col_analise:
-        # Tabs para diferentes análises
-        tab_estrutura, tab_conectivos, tab_gramatical = st.tabs([
-            "Estrutura", 
-            "Conectivos", 
-            "Gramática"
-        ])
-        
-        # Tab de estrutura
-        with tab_estrutura:
-            if analise.argumentos:
-                mostrar_analise_argumentos(analise.argumentos)
-            
-            st.markdown("#### 📊 Elementos Estruturais")
-            col1, col2 = st.columns(2)
-            with col1:
-                elementos_presentes = len(analise.elementos.presentes)
-                st.metric("Elementos Presentes", elementos_presentes)
-            with col2:
-                st.metric(
-                    "Qualidade Estrutural",
-                    f"{int(analise.elementos.score * 100)}%"
-                )
-        
-        # Tab de conectivos
-        with tab_conectivos:
-            if analise.analise_conectivos:
-                mostrar_analise_conectivos(analise.analise_conectivos)
-            else:
-                st.info("Nenhum conectivo identificado.")
-        
-        # Tab gramatical
-        with tab_gramatical:
-            if analise.correcao_gramatical:
-                mostrar_correcoes_gramaticais(analise.correcao_gramatical)
-            else:
-                st.info("Análise gramatical não disponível.")
-    
-    # Feedback geral
-    st.markdown("### 💡 Feedback Geral")
-    for fb in analise.feedback:
-        st.markdown(
-            f"""<div style='
-                background-color: #1e2a3a;
-                padding: 10px;
-                border-radius: 5px;
-                margin: 5px 0;
-            '>{fb}</div>""",
-            unsafe_allow_html=True
-        )
-
-def analisar_conectivos_com_ia(texto: str, retry_count: int = 0) -> Optional[List[Dict]]:
-    """Analisa conectivos usando IA para identificação mais precisa."""
-    if retry_count >= MAX_RETRIES or not client:
-        return None
-        
-    try:
-        prompt = f"""Analise este texto e identifique todos os conectivos importantes para o ENEM, retornando um JSON com o seguinte formato:
-{{
-    "conectivos": [
-        {{
-            "texto": "conectivo encontrado",
-            "tipo": "tipo do conectivo (aditivo/adversativo/conclusivo/etc)",
-            "indice_inicio": posição inicial no texto,
-            "indice_fim": posição final no texto
-        }}
-    ]
-}}
-
-Considere apenas conectivos relevantes para o ENEM, como:
-- Conclusivos: portanto, dessa forma, por conseguinte, logo, assim sendo
-- Explicativos: visto que, uma vez que, tendo em vista que, já que
-- Adversativos: entretanto, no entanto, contudo, todavia, porém
-- Aditivos: além disso, ademais, outrossim, igualmente
-- Sequenciais: primeiramente, em seguida, por fim
-E outros conectivos importantes que contribuam para a argumentação.
-
-Ignore conectivos básicos como "e", "mas", "ou".
-
-Texto para análise:
-{texto}"""
-
-        response = client.chat.completions.create(
-            model=ModeloAnalise.RAPIDO,
-            messages=[{
-                "role": "system",
-                "content": "Você é um analisador especializado em identificar conectivos em textos do ENEM."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }],
-            temperature=0.3,
-            max_tokens=500,
-            timeout=API_TIMEOUT,
-            response_format={"type": "json_object"}
-        )
-        
-        try:
-            resposta_texto = response.choices[0].message.content.strip()
-            resposta_texto = resposta_texto[resposta_texto.find("{"):resposta_texto.rfind("}")+1]
-            resultado = json.loads(resposta_texto)
-            
-            if "conectivos" not in resultado:
-                raise ValueError("Resposta JSON incompleta")
-                
-            return resultado["conectivos"]
-            
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logger.warning(f"Erro no parsing da resposta IA: {e}. Tentativa {retry_count + 1}")
-            if retry_count < MAX_RETRIES:
-                from time import sleep
-                sleep(1)
-                return analisar_conectivos_com_ia(texto, retry_count + 1)
-            return None
-            
-    except Exception as e:
-        logger.error(f"Erro na análise IA de conectivos: {str(e)}")
-        return None
-
-class AnalisadorConectivos:
-    def __init__(self):
-        # Mantém o dicionário de conectivos como referência
-        self.conectivos_por_tipo = {
-            "aditivos": [
-                "além disso", "ademais", "outrossim",
-                "não apenas... mas também", "inclusive",
-                "soma-se a isso", "igualmente"
-            ],
-            # ... [resto do dicionário permanece igual]
-        }
-
-    def identificar_conectivos(self, texto: str) -> AnaliseConectivos:
-        """Identifica conectivos usando combinação de análise básica e IA."""
-        # Primeiro, tenta análise via IA
-        conectivos_ia = analisar_conectivos_com_ia(texto)
-        
-        conectivos_encontrados = []
-        estatisticas = {tipo: 0 for tipo in self.conectivos_por_tipo.keys()}
-        repeticoes = {}
-        
-        if conectivos_ia:
-            # Processa resultados da IA
-            for conectivo in conectivos_ia:
-                tipo = conectivo["tipo"]
-                texto_conectivo = conectivo["texto"]
-                inicio = conectivo["indice_inicio"]
-                fim = conectivo["indice_fim"]
-                
-                # Registra estatísticas
-                if tipo in estatisticas:
-                    estatisticas[tipo] += 1
-                    
-                    # Verifica repetições
-                    if texto_conectivo in repeticoes:
-                        repeticoes[texto_conectivo] += 1
-                    else:
-                        repeticoes[texto_conectivo] = 1
-                
-                conectivos_encontrados.append(ConectivoAnalise(
-                    texto=texto_conectivo,
-                    tipo=tipo,
-                    posicao=(inicio, fim),
-                    frequencia=repeticoes.get(texto_conectivo, 1)
-                ))
-        
-        # Realiza análise complementar com o método tradicional
-        self._adicionar_conectivos_tradicionais(
-            texto, 
-            conectivos_encontrados, 
-            estatisticas, 
-            repeticoes
-        )
-        
-        score = self._calcular_score(estatisticas, repeticoes)
-        feedback = self._gerar_feedback(estatisticas, repeticoes)
-        
-        return AnaliseConectivos(
-            conectivos=conectivos_encontrados,
-            estatisticas=estatisticas,
-            repeticoes=repeticoes,
-            score=score,
-            feedback=feedback
-        )
-
-    def _adicionar_conectivos_tradicionais(
+    async def analisar_texto_base(
         self, 
         texto: str, 
-        conectivos_encontrados: List[ConectivoAnalise],
-        estatisticas: Dict[str, int],
-        repeticoes: Dict[str, int]
-    ):
-        """Adiciona conectivos encontrados pelo método tradicional."""
-        texto_lower = texto.lower()
-        posicoes_existentes = set(
-            (c.posicao[0], c.posicao[1]) 
-            for c in conectivos_encontrados
+        sistema_prompt: str,
+        prompt_template: str,
+        temperatura: float = 0.7,
+        retry_count: int = 0
+    ) -> Dict:
+        """Método base para análise de texto usando GPT"""
+        if retry_count >= MAX_RETRIES:
+            raise Exception("Número máximo de tentativas excedido")
+            
+        try:
+            # Verifica cache
+            cache_key = f"{hash(texto)}:{hash(prompt_template)}"
+            cached_result = self.cache.get(cache_key)
+            if cached_result:
+                return cached_result
+
+            # Faz requisição ao GPT
+            response = await self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": sistema_prompt},
+                    {"role": "user", "content": prompt_template.format(texto=texto)}
+                ],
+                temperature=temperatura,
+                timeout=API_TIMEOUT
+            )
+            
+            # Processa resposta
+            try:
+                resultado = json.loads(response.choices[0].message.content)
+                self.cache.set(cache_key, resultado)
+                return resultado
+            except json.JSONDecodeError as e:
+                logger.error(f"Erro ao decodificar JSON: {e}")
+                if retry_count < MAX_RETRIES:
+                    time.sleep(1)
+                    return await self.analisar_texto_base(
+                        texto, 
+                        sistema_prompt,
+                        prompt_template,
+                        temperatura,
+                        retry_count + 1
+                    )
+                raise
+                
+        except Exception as e:
+            logger.error(f"Erro na análise de texto: {e}")
+            if retry_count < MAX_RETRIES:
+                time.sleep(1)
+                return await self.analisar_texto_base(
+                    texto, 
+                    sistema_prompt,
+                    prompt_template,
+                    temperatura,
+                    retry_count + 1
+                )
+            raise
+
+    def destacar_texto(self, texto: str, analise: Dict) -> str:
+        """Destaca elementos no texto baseado na análise"""
+        texto_html = texto
+        
+        # Adiciona marcações HTML para elementos importantes
+        if "elementos_destacados" in analise:
+            for elemento in analise["elementos_destacados"]:
+                inicio = elemento["posicao_inicio"]
+                fim = elemento["posicao_fim"]
+                tipo = elemento["tipo"]
+                comentario = elemento.get("comentario", "")
+                
+                texto_html = (
+                    texto_html[:inicio] +
+                    f'<span class="annotation" data-tipo="{tipo}" title="{comentario}">' +
+                    texto_html[inicio:fim] +
+                    '</span>' +
+                    texto_html[fim:]
+                )
+        
+        return texto_html
+
+    def gerar_feedback_visual(self, analise: Dict) -> str:
+        """Gera feedback visual baseado na análise"""
+        feedback_html = "<div class='feedback-container'>"
+        
+        if "pontos_positivos" in analise:
+            feedback_html += "<div class='feedback-section positive'>"
+            feedback_html += "<h4>✅ Pontos Positivos</h4>"
+            for ponto in analise["pontos_positivos"]:
+                feedback_html += f"<p class='feedback-item'>• {ponto}</p>"
+            feedback_html += "</div>"
+        
+        if "pontos_melhoria" in analise:
+            feedback_html += "<div class='feedback-section improvement'>"
+            feedback_html += "<h4>💡 Pontos para Melhorar</h4>"
+            for ponto in analise["pontos_melhoria"]:
+                feedback_html += f"<p class='feedback-item'>• {ponto}</p>"
+            feedback_html += "</div>"
+        
+        feedback_html += "</div>"
+        return feedback_html
+
+class ModuloBase:
+    """Classe base para todos os módulos de competência"""
+    
+    def __init__(self, client: openai.OpenAI, competencia: CompetenciaModulo):
+        self.client = client
+        self.competencia = competencia
+        self.cache = Cache()
+        self.analisador = AnalisadorTexto(client)
+
+    async def _fazer_requisicao_gpt(
+        self, 
+        prompt: str, 
+        sistema_prompt: str,
+        temperatura: float = 0.7,
+        retry_count: int = 0
+    ) -> Dict:
+        """Método base para fazer requisições ao GPT-4"""
+        return await self.analisador.analisar_texto_base(
+            prompt,
+            sistema_prompt,
+            prompt,
+            temperatura,
+            retry_count
+        )
+
+    def calcular_nota(self, analise: Dict) -> float:
+        """Calcula nota de 0-200 baseada na análise"""
+        try:
+            if "score_geral" in analise:
+                return float(analise["score_geral"])
+            return sum(
+                criterio["score"] 
+                for criterio in analise.get("criterios", [])
+            ) / len(analise.get("criterios", [1])) * 200
+        except Exception as e:
+            logger.error(f"Erro ao calcular nota: {e}")
+            return 0.0
+
+class ModuloNormaCulta(ModuloBase):
+    """Módulo específico para Competência 1 - Domínio da Norma Culta"""
+    
+    def __init__(self, client: openai.OpenAI):
+        super().__init__(client, CompetenciaModulo.NORMA_CULTA)
+        self.sistema_prompt = """Você é um tutor especializado na primeira competência do ENEM:
+        domínio da norma culta da língua escrita. Você deve:
+        
+        1. Analisar aspectos formais da escrita:
+           - Ortografia
+           - Acentuação
+           - Pontuação
+           - Concordância
+           - Regência
+           - Colocação pronominal
+        
+        2. Verificar adequação vocabular:
+           - Registro formal
+           - Precisão lexical
+           - Variação vocabular
+        
+        3. Identificar problemas de construção:
+           - Paralelismo
+           - Ambiguidade
+           - Redundância
+           - Repetições
+        
+        Forneça feedback construtivo e específico, sempre explicando o porquê das correções
+        e sugerindo formas de melhorar."""
+
+    async def analisar_texto(self, texto: str) -> Dict:
+        """Analisa o texto quanto à norma culta"""
+        prompt = f"""Analise detalhadamente o seguinte texto quanto ao domínio da norma culta:
+
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "erros_gramaticais": [
+                {{
+                    "tipo": "tipo do erro",
+                    "trecho": "trecho com erro",
+                    "correcao": "sugestão de correção",
+                    "explicacao": "explicação didática",
+                    "posicao": [inicio, fim]
+                }}
+            ],
+            "adequacao_vocabular": {{
+                "nivel_formalidade": 1-5,
+                "problemas_identificados": [],
+                "sugestoes_melhoria": [],
+                "termos_inadequados": [
+                    {{
+                        "termo": "termo encontrado",
+                        "sugestao": "termo mais adequado",
+                        "posicao": [inicio, fim]
+                    }}
+                ]
+            }},
+            "construcao_frases": {{
+                "problemas": [
+                    {{
+                        "tipo": "tipo do problema",
+                        "trecho": "trecho problemático",
+                        "sugestao": "como melhorar",
+                        "posicao": [inicio, fim]
+                    }}
+                ],
+                "sugestoes": []
+            }},
+            "pontuacao": {{
+                "erros": [
+                    {{
+                        "tipo": "tipo do erro",
+                        "trecho": "trecho com erro",
+                        "correcao": "correção sugerida",
+                        "posicao": [inicio, fim]
+                    }}
+                ],
+                "sugestoes": []
+            }},
+            "score_geral": 0-200,
+            "feedback_geral": "feedback construtivo",
+            "elementos_destacados": [
+                {{
+                    "tipo": "tipo do elemento",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre o elemento"
+                }}
+            ],
+            "proximos_passos": []
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(
+            texto,
+            self.sistema_prompt
         )
         
-        for tipo, lista_conectivos in self.conectivos_por_tipo.items():
-            for conectivo in lista_conectivos:
-                padrao = rf'\b{re.escape(conectivo)}\b'
-                for match in re.finditer(padrao, texto_lower):
-                    inicio, fim = match.span()
-                    
-                    # Verifica se já foi encontrado pela IA
-                    if (inicio, fim) not in posicoes_existentes:
-                        estatisticas[tipo] += 1
-                        
-                        if conectivo in repeticoes:
-                            repeticoes[conectivo] += 1
-                        else:
-                            repeticoes[conectivo] = 1
-                        
-                        conectivos_encontrados.append(ConectivoAnalise(
-                            texto=texto[inicio:fim],
-                            tipo=tipo,
-                            posicao=(inicio, fim),
-                            frequencia=repeticoes[conectivo]
-                        ))
-                        posicoes_existentes.add((inicio, fim))
+        # Adiciona elementos destacados para visualização
+        resultado["elementos_destacados"] = (
+            self._gerar_elementos_destacados(resultado)
+        )
+        
+        return resultado
+
+    def _gerar_elementos_destacados(self, analise: Dict) -> List[Dict]:
+        """Gera lista de elementos para destacar no texto"""
+        elementos = []
+        
+        # Adiciona erros gramaticais
+        for erro in analise.get("erros_gramaticais", []):
+            elementos.append({
+                "tipo": "erro_gramatical",
+                "texto": erro["trecho"],
+                "posicao_inicio": erro["posicao"][0],
+                "posicao_fim": erro["posicao"][1],
+                "comentario": erro["explicacao"]
+            })
+        
+        # Adiciona problemas de vocabulário
+        for termo in analise.get("adequacao_vocabular", {}).get("termos_inadequados", []):
+            elementos.append({
+                "tipo": "vocabulario_inadequado",
+                "texto": termo["termo"],
+                "posicao_inicio": termo["posicao"][0],
+                "posicao_fim": termo["posicao"][1],
+                "comentario": f"Sugestão: {termo['sugestao']}"
+            })
+        
+        # Adiciona problemas de construção
+        for problema in analise.get("construcao_frases", {}).get("problemas", []):
+            elementos.append({
+                "tipo": "problema_construcao",
+                "texto": problema["trecho"],
+                "posicao_inicio": problema["posicao"][0],
+                "posicao_fim": problema["posicao"][1],
+                "comentario": problema["sugestao"]
+            })
+        
+        return elementos
+
+    async def gerar_exercicios(
+        self, 
+        nivel: NivelAluno,
+        areas_foco: List[str]
+    ) -> List[ExercicioRedacao]:
+        """Gera exercícios personalizados de norma culta"""
+        prompt = f"""Crie exercícios de norma culta para nível {nivel.value} 
+        focando nas áreas: {', '.join(areas_foco)}
+
+        Retorne um JSON com exercícios seguindo exatamente este formato:
+        {{
+            "exercicios": [
+                {{
+                    "tipo": "tipo do exercício",
+                    "nivel": "{nivel.value}",
+                    "enunciado": "enunciado completo",
+                    "instrucoes": ["instrução 1", "instrução 2"],
+                    "criterios": ["critério 1", "critério 2"],
+                    "exemplo_resposta": "exemplo de resposta esperada",
+                    "dicas": ["dica 1", "dica 2"],
+                    "tempo_estimado": tempo_em_minutos
+                }}
+            ]
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(
+            prompt,
+            self.sistema_prompt
+        )
+        
+        return [
+            ExercicioRedacao(**ex) 
+            for ex in resultado.get("exercicios", [])
+        ]
+
+
+class ModuloInterpretacao(ModuloBase):
+    """Módulo específico para Competência 2 - Compreensão da proposta"""
+    
+    def __init__(self, client: openai.OpenAI):
+        super().__init__(client, CompetenciaModulo.INTERPRETACAO)
+        self.sistema_prompt = """Você é um tutor especializado na segunda competência do ENEM:
+        compreensão da proposta e desenvolvimento do tema. Você deve:
+        
+        1. Auxiliar na análise dos textos motivadores:
+           - Identificação de ideias principais
+           - Relações entre os textos
+           - Contextualização do tema
+           - Identificação de dados relevantes
+        
+        2. Orientar na compreensão do tema:
+           - Palavras-chave
+           - Delimitação do recorte temático
+           - Aspectos centrais e periféricos
+           - Abordagens possíveis
+        
+        3. Verificar a pertinência temática:
+           - Aderência ao tema
+           - Tangenciamento
+           - Fuga do tema
+           - Aprofundamento adequado
+        
+        Forneça orientações construtivas que levem o aluno a desenvolver autonomia
+        na interpretação de propostas de redação."""
+
+    async def analisar_compreensao(
+        self, 
+        tema: str, 
+        textos_motivadores: List[str], 
+        texto_aluno: str
+    ) -> Dict:
+        """Analisa a compreensão do tema e textos motivadores"""
+        prompt = f"""Analise a compreensão do tema e dos textos motivadores:
+
+        TEMA: {tema}
+        
+        TEXTOS MOTIVADORES:
+        {json.dumps(textos_motivadores)}
+        
+        TEXTO DO ALUNO:
+        {texto_aluno}
+
+        Retorne um JSON com:
+        {{
+            "analise_tema": {{
+                "palavras_chave": [],
+                "recorte_identificado": "descrição do recorte",
+                "abordagem_aluno": "descrição da abordagem",
+                "pertinencia": 0-200,
+                "problemas": [],
+                "elementos_destacados": [
+                    {{
+                        "tipo": "palavra_chave",
+                        "texto": "termo encontrado",
+                        "posicao_inicio": inicio,
+                        "posicao_fim": fim,
+                        "comentario": "relevância do termo"
+                    }}
+                ]
+            }},
+            "uso_motivadores": {{
+                "referencias_explicitas": [
+                    {{
+                        "texto": "referência encontrada",
+                        "texto_original": "trecho do motivador",
+                        "tipo_uso": "tipo de referência",
+                        "posicao": [inicio, fim]
+                    }}
+                ],
+                "referencias_implicitas": [],
+                "integracao_argumentos": 0-200,
+                "sugestoes_uso": []
+            }},
+            "desenvolvimento": {{
+                "aspectos_contemplados": [],
+                "aspectos_ignorados": [],
+                "nivel_aprofundamento": 0-200,
+                "sugestoes_desenvolvimento": []
+            }},
+            "score_geral": 0-200,
+            "feedback_detalhado": "feedback construtivo",
+            "proximos_passos": [],
+            "elementos_destacados": [
+                {{
+                    "tipo": "tipo do elemento",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre o elemento"
+                }}
+            ]
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return self._processar_resultado_analise(resultado, texto_aluno)
+
+    def _processar_resultado_analise(self, resultado: Dict, texto_original: str) -> Dict:
+        """Processa o resultado da análise adicionando elementos visuais"""
+        elementos_destacados = []
+        
+        # Adiciona palavras-chave
+        if "analise_tema" in resultado:
+            elementos_destacados.extend(
+                resultado["analise_tema"].get("elementos_destacados", [])
+            )
+        
+        # Adiciona referências aos textos motivadores
+        if "uso_motivadores" in resultado:
+            for ref in resultado["uso_motivadores"].get("referencias_explicitas", []):
+                elementos_destacados.append({
+                    "tipo": "referencia_motivador",
+                    "texto": ref["texto"],
+                    "posicao_inicio": ref["posicao"][0],
+                    "posicao_fim": ref["posicao"][1],
+                    "comentario": f"Referência ao texto motivador: {ref['texto_original']}"
+                })
+        
+        resultado["elementos_destacados"] = elementos_destacados
+        return resultado
+
+    async def gerar_exercicios_interpretacao(
+        self,
+        nivel: NivelAluno,
+        foco: List[str]
+    ) -> List[ExercicioRedacao]:
+        """Gera exercícios de interpretação de propostas"""
+        prompt = f"""Crie exercícios de interpretação para nível {nivel.value} 
+        focando em: {', '.join(foco)}
+
+        Retorne um JSON com:
+        {{
+            "exercicios": [
+                {{
+                    "tipo": "interpretacao",
+                    "nivel": "{nivel.value}",
+                    "enunciado": "enunciado completo",
+                    "textos_motivadores": [],
+                    "instrucoes": ["instrução 1", "instrução 2"],
+                    "criterios": ["critério 1", "critério 2"],
+                    "exemplo_resposta": "exemplo de resposta esperada",
+                    "dicas": ["dica 1", "dica 2"],
+                    "tempo_estimado": tempo_em_minutos
+                }}
+            ]
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return [
+            ExercicioRedacao(**ex) 
+            for ex in resultado.get("exercicios", [])
+        ]
+
+    async def analisar_textos_motivadores(
+        self,
+        textos: List[str],
+        tema: str
+    ) -> Dict:
+        """Auxilia na análise dos textos motivadores"""
+        prompt = f"""Analise os textos motivadores em relação ao tema:
+
+        TEMA: {tema}
+        
+        TEXTOS:
+        {json.dumps(textos)}
+
+        Retorne um JSON com:
+        {{
+            "analise_individual": [
+                {{
+                    "texto": "texto analisado",
+                    "ideias_principais": [],
+                    "dados_relevantes": [],
+                    "relacao_tema": "explicação",
+                    "possiveis_usos": []
+                }}
+            ],
+            "relacoes_entre_textos": [],
+            "aspectos_complementares": [],
+            "sugestoes_abordagem": [],
+            "armadilhas_evitar": [],
+            "elementos_destacados": [
+                {{
+                    "tipo": "ideia_principal",
+                    "texto": "trecho relevante",
+                    "texto_original": "número do texto motivador",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "relevância do trecho"
+                }}
+            ]
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+    async def gerar_roteiro_interpretacao(self, tema: str, nivel: NivelAluno) -> Dict:
+        """Gera um roteiro para interpretação do tema"""
+        prompt = f"""Crie um roteiro de interpretação para o tema:
+        
+        TEMA: {tema}
+        NÍVEL: {nivel.value}
+
+        Retorne um JSON com:
+        {{
+            "etapas_analise": [
+                {{
+                    "ordem": número_da_etapa,
+                    "descricao": "o que fazer",
+                    "objetivo": "por que fazer",
+                    "dicas": ["dica 1", "dica 2"]
+                }}
+            ],
+            "perguntas_guia": [
+                {{
+                    "pergunta": "pergunta orientadora",
+                    "objetivo": "objetivo da pergunta",
+                    "dicas_reflexao": []
+                }}
+            ],
+            "armadilhas_comuns": [],
+            "estrategias_foco": []
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+class ModuloArgumentacao(ModuloBase):
+    """Módulo específico para Competência 3 - Argumentação"""
+    
+    def __init__(self, client: openai.OpenAI):
+        super().__init__(client, CompetenciaModulo.ARGUMENTACAO)
+        self.sistema_prompt = """Você é um tutor especializado na terceira competência do ENEM:
+        argumentação e defesa de ponto de vista. Você deve analisar:
+        
+        1. ESTRUTURA ARGUMENTATIVA
+           - Projeto de texto (argumentos principais e secundários)
+           - Seleção estratégica de informações
+           - Hierarquização de ideias
+           - Desenvolvimento progressivo
+        
+        2. TIPOS DE ARGUMENTOS
+           - Causa e consequência
+           - Exemplificação
+           - Comparação
+           - Dados estatísticos
+           - Argumento de autoridade
+           - Contraposição
+        
+        3. REPERTÓRIO SOCIOCULTURAL
+           - Filosófico
+           - Histórico
+           - Literário
+           - Sociológico
+           - Científico
+           - Atualidades
+        
+        4. QUALIDADE ARGUMENTATIVA
+           - Pertinência
+           - Profundidade
+           - Produtividade
+           - Circularidade vs. Progressão
+           - Consistência
+        
+        Forneça feedback específico e orientações práticas para desenvolvimento
+        de argumentação sólida dentro dos critérios do ENEM."""
+
+    async def analisar_argumentacao(self, texto: str, tema: str) -> Dict:
+        """Analisa detalhadamente a argumentação do texto"""
+        prompt = f"""Analise a argumentação no texto:
+
+        TEMA: {tema}
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "estrutura_argumentativa": {{
+                "tese": {{
+                    "texto": "tese identificada",
+                    "clareza": 0-200,
+                    "posicao": [inicio, fim],
+                    "tipo_desenvolvimento": "análise"
+                }},
+                "argumentos": [
+                    {{
+                        "tipo": "tipo do argumento",
+                        "texto": "texto do argumento",
+                        "posicao": [inicio, fim],
+                        "forca": 0-200,
+                        "desenvolvimento": "análise",
+                        "problemas": [],
+                        "sugestoes": []
+                    }}
+                ],
+                "hierarquia_ideias": "análise da hierarquização"
+            }},
+            "repertorio_sociocultural": {{
+                "referencias": [
+                    {{
+                        "tipo": "área do conhecimento",
+                        "texto": "referência utilizada",
+                        "posicao": [inicio, fim],
+                        "pertinencia": 0-200,
+                        "desenvolvimento": "análise do uso"
+                    }}
+                ],
+                "areas_presentes": [],
+                "areas_ausentes": [],
+                "qualidade_uso": 0-200,
+                "sugestoes_ampliacao": []
+            }},
+            "progressao_argumentativa": {{
+                "encadeamento_logico": 0-200,
+                "aprofundamento": 0-200,
+                "problemas_identificados": [],
+                "pontos_fortes": []
+            }},
+            "avaliacao_criterios": {{
+                "pertinencia": 0-200,
+                "produtividade": 0-200,
+                "circularidade": "análise",
+                "consistencia": 0-200
+            }},
+            "score_geral": 0-200,
+            "feedback_detalhado": "feedback construtivo",
+            "elementos_destacados": [
+                {{
+                    "tipo": "tipo do elemento",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre o elemento"
+                }}
+            ],
+            "sugestoes_melhoria": []
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return self._processar_resultado_argumentacao(resultado)
+
+    def _processar_resultado_argumentacao(self, resultado: Dict) -> Dict:
+        """Processa o resultado da análise argumentativa"""
+        elementos_destacados = []
+        
+        # Destaca tese
+        if "estrutura_argumentativa" in resultado:
+            tese = resultado["estrutura_argumentativa"].get("tese")
+            if tese:
+                elementos_destacados.append({
+                    "tipo": "tese",
+                    "texto": tese["texto"],
+                    "posicao_inicio": tese["posicao"][0],
+                    "posicao_fim": tese["posicao"][1],
+                    "comentario": f"Tese - Clareza: {tese['clareza']}/200"
+                })
+        
+        # Destaca argumentos
+        for arg in resultado["estrutura_argumentativa"].get("argumentos", []):
+            elementos_destacados.append({
+                "tipo": f"argumento_{arg['tipo']}",
+                "texto": arg["texto"],
+                "posicao_inicio": arg["posicao"][0],
+                "posicao_fim": arg["posicao"][1],
+                "comentario": f"{arg['tipo'].title()} - Força: {arg['forca']}/200"
+            })
+        
+        # Destaca repertório
+        for ref in resultado["repertorio_sociocultural"].get("referencias", []):
+            elementos_destacados.append({
+                "tipo": f"repertorio_{ref['tipo']}",
+                "texto": ref["texto"],
+                "posicao_inicio": ref["posicao"][0],
+                "posicao_fim": ref["posicao"][1],
+                "comentario": f"Repertório {ref['tipo']} - Pertinência: {ref['pertinencia']}/200"
+            })
+        
+        resultado["elementos_destacados"] = elementos_destacados
+        return resultado
+
+    async def sugerir_repertorio(self, tema: str, nivel: NivelAluno) -> Dict:
+        """Sugere repertório sociocultural relevante"""
+        prompt = f"""Sugira repertório sociocultural para o tema:
+        
+        TEMA: {tema}
+        NÍVEL: {nivel.value}
+
+        Retorne um JSON com:
+        {{
+            "areas_conhecimento": [
+                {{
+                    "area": "área do conhecimento",
+                    "exemplos": [
+                        {{
+                            "conteudo": "exemplo específico",
+                            "aplicacao": "como aplicar",
+                            "fonte": "referência",
+                            "nivel_complexidade": 1-5
+                        }}
+                    ]
+                }}
+            ],
+            "argumentos_possiveis": [
+                {{
+                    "tipo": "tipo de argumento",
+                    "desenvolvimento": "como desenvolver",
+                    "repertorio_sugerido": [],
+                    "exemplo_uso": "exemplo de aplicação"
+                }}
+            ],
+            "material_aprofundamento": {{
+                "artigos": [],
+                "videos": [],
+                "livros": []
+            }},
+            "dicas_uso": []
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+    async def gerar_exercicios_argumentacao(
+        self,
+        nivel: NivelAluno,
+        foco: List[str]
+    ) -> List[ExercicioRedacao]:
+        """Gera exercícios específicos de argumentação"""
+        prompt = f"""Crie exercícios de argumentação para nível {nivel.value}
+        focando em: {', '.join(foco)}
+
+        Retorne um JSON com:
+        {{
+            "exercicios": [
+                {{
+                    "tipo": "argumentacao",
+                    "nivel": "{nivel.value}",
+                    "enunciado": "enunciado completo",
+                    "contexto": "contextualização",
+                    "instrucoes": ["instrução 1", "instrução 2"],
+                    "criterios": ["critério 1", "critério 2"],
+                    "exemplo_resposta": "exemplo de resposta esperada",
+                    "dicas": ["dica 1", "dica 2"],
+                    "tempo_estimado": tempo_em_minutos
+                }}
+            ],
+            "material_apoio": {{
+                "tecnicas": [],
+                "exemplos": [],
+                "repertorio": []
+            }}
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return [
+            ExercicioRedacao(**ex) 
+            for ex in resultado.get("exercicios", [])
+        ]
+
+    async def analisar_progressao_argumentativa(self, texto: str) -> Dict:
+        """Analisa a progressão e encadeamento dos argumentos"""
+        prompt = f"""Analise a progressão argumentativa do texto:
+
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "encadeamento": {{
+                "sequencia_logica": 0-200,
+                "transicoes": "análise das transições",
+                "problemas_identificados": []
+            }},
+            "desenvolvimento": {{
+                "aprofundamento": 0-200,
+                "circularidade": "análise",
+                "pontos_criticos": []
+            }},
+            "elementos_coesivos": [
+                {{
+                    "texto": "elemento coesivo",
+                    "funcao": "função no texto",
+                    "posicao": [inicio, fim],
+                    "eficacia": 0-200
+                }}
+            ],
+            "mapa_argumentativo": {{
+                "estrutura": "descrição da estrutura",
+                "fluxo": "análise do fluxo",
+                "sugestoes_melhoria": []
+            }}
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+class ModuloCoesao(ModuloBase):
+    """Módulo específico para Competência 4 - Coesão Textual"""
+    
+    def __init__(self, client: openai.OpenAI):
+        super().__init__(client, CompetenciaModulo.COESAO)
+        self.sistema_prompt = """Você é um tutor especializado na quarta competência do ENEM:
+        mecanismos linguísticos e coesão textual. Você deve analisar:
+        
+        1. RECURSOS COESIVOS
+           - Conectivos e operadores argumentativos
+           - Pronomes e elementos referenciais
+           - Elipse e substituição
+           - Repetição e paralelismo
+           - Articuladores de coesão
+        
+        2. ARTICULAÇÃO TEXTUAL
+           - Encadeamento de parágrafos
+           - Relações lógico-semânticas
+           - Progressão temática
+           - Coerência argumentativa
+           - Fluidez do texto
+        
+        3. QUALIDADE DA COESÃO
+           - Precisão dos conectivos
+           - Clareza das referências
+           - Adequação das transições
+           - Manutenção temática
+           - Progressão textual
+        
+        Forneça feedback específico e orientações práticas para desenvolvimento
+        de texto coeso e bem articulado."""
+
+    async def analisar_coesao(self, texto: str) -> Dict:
+        """Analisa detalhadamente os mecanismos de coesão"""
+        prompt = f"""Analise os mecanismos de coesão no texto:
+
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "recursos_coesivos": {{
+                "conectivos": [
+                    {{
+                        "texto": "conectivo usado",
+                        "tipo": "tipo de conexão",
+                        "posicao": [inicio, fim],
+                        "funcao": "função no texto",
+                        "eficacia": 0-200,
+                        "sugestoes": []
+                    }}
+                ],
+                "elementos_referenciais": [
+                    {{
+                        "texto": "elemento referencial",
+                        "referente": "a que se refere",
+                        "posicao": [inicio, fim],
+                        "clareza": 0-200,
+                        "problemas": []
+                    }}
+                ],
+                "repeticoes": [
+                    {{
+                        "texto": "termo repetido",
+                        "ocorrencias": [posicoes],
+                        "tipo": "intencional/problemática",
+                        "sugestoes": []
+                    }}
+                ]
+            }},
+            "articulacao_textual": {{
+                "entre_paragrafos": {{
+                    "transicoes": [
+                        {{
+                            "posicao": [inicio, fim],
+                            "tipo": "tipo de transição",
+                            "qualidade": 0-200,
+                            "sugestoes": []
+                        }}
+                    ],
+                    "problemas_identificados": []
+                }},
+                "dentro_paragrafos": {{
+                    "qualidade": 0-200,
+                    "problemas": [],
+                    "sugestoes": []
+                }}
+            }},
+            "progressao_tematica": {{
+                "manutencao_tema": 0-200,
+                "desenvolvimento": "análise do desenvolvimento",
+                "quebras": [
+                    {{
+                        "posicao": [inicio, fim],
+                        "problema": "descrição do problema",
+                        "sugestao": "como corrigir"
+                    }}
+                ]
+            }},
+            "score_geral": 0-200,
+            "feedback_detalhado": "feedback construtivo",
+            "elementos_destacados": [
+                {{
+                    "tipo": "tipo do elemento",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre o elemento"
+                }}
+            ],
+            "sugestoes_melhoria": []
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return self._processar_resultado_coesao(resultado)
+
+    def _processar_resultado_coesao(self, resultado: Dict) -> Dict:
+        """Processa o resultado da análise de coesão"""
+        elementos_destacados = []
+        
+        # Destaca conectivos
+        for conectivo in resultado["recursos_coesivos"].get("conectivos", []):
+            elementos_destacados.append({
+                "tipo": "conectivo",
+                "texto": conectivo["texto"],
+                "posicao_inicio": conectivo["posicao"][0],
+                "posicao_fim": conectivo["posicao"][1],
+                "comentario": f"{conectivo['tipo'].title()} - Eficácia: {conectivo['eficacia']}/200"
+            })
+        
+        # Destaca elementos referenciais
+        for ref in resultado["recursos_coesivos"].get("elementos_referenciais", []):
+            elementos_destacados.append({
+                "tipo": "referencial",
+                "texto": ref["texto"],
+                "posicao_inicio": ref["posicao"][0],
+                "posicao_fim": ref["posicao"][1],
+                "comentario": f"Referente a: {ref['referente']} - Clareza: {ref['clareza']}/200"
+            })
+        
+        # Destaca repetições problemáticas
+        for rep in resultado["recursos_coesivos"].get("repeticoes", []):
+            if rep["tipo"] == "problemática":
+                for pos in rep["ocorrencias"]:
+                    elementos_destacados.append({
+                        "tipo": "repeticao",
+                        "texto": rep["texto"],
+                        "posicao_inicio": pos[0],
+                        "posicao_fim": pos[1],
+                        "comentario": "Repetição que pode ser evitada"
+                    })
+        
+        # Destaca quebras de progressão
+        for quebra in resultado["progressao_tematica"].get("quebras", []):
+            elementos_destacados.append({
+                "tipo": "quebra_progressao",
+                "texto": quebra["texto"],
+                "posicao_inicio": quebra["posicao"][0],
+                "posicao_fim": quebra["posicao"][1],
+                "comentario": quebra["problema"]
+            })
+        
+        resultado["elementos_destacados"] = elementos_destacados
+        return resultado
+
+    async def gerar_exercicios_coesao(
+        self,
+        nivel: NivelAluno,
+        foco: List[str]
+    ) -> List[ExercicioRedacao]:
+        """Gera exercícios específicos de coesão textual"""
+        prompt = f"""Crie exercícios de coesão textual para nível {nivel.value}
+        focando em: {', '.join(foco)}
+
+        Retorne um JSON com:
+        {{
+            "exercicios": [
+                {{
+                    "tipo": "coesao",
+                    "nivel": "{nivel.value}",
+                    "enunciado": "enunciado completo",
+                    "texto_base": "texto para exercício",
+                    "instrucoes": ["instrução 1", "instrução 2"],
+                    "criterios": ["critério 1", "critério 2"],
+                    "exemplo_resposta": "exemplo de resposta esperada",
+                    "dicas": ["dica 1", "dica 2"],
+                    "tempo_estimado": tempo_em_minutos
+                }}
+            ],
+            "material_apoio": {{
+                "conectivos_essenciais": [],
+                "estruturas_modelo": [],
+                "exemplos_praticos": []
+            }}
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return [
+            ExercicioRedacao(**ex) 
+            for ex in resultado.get("exercicios", [])
+        ]
+
+    async def sugerir_melhorias_coesao(
+        self,
+        texto: str,
+        problemas_identificados: List[str]
+    ) -> Dict:
+        """Sugere melhorias específicas para problemas de coesão"""
+        prompt = f"""Sugira melhorias de coesão para o texto, 
+        considerando os problemas identificados: {', '.join(problemas_identificados)}
+
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "sugestoes": [
+                {{
+                    "problema": "descrição do problema",
+                    "trecho_original": "texto original",
+                    "sugestao": "como melhorar",
+                    "explicacao": "por que melhorar assim",
+                    "exemplos": []
+                }}
+            ],
+            "exercicios_pratica": [
+                {{
+                    "foco": "aspecto a praticar",
+                    "instrucoes": "como praticar",
+                    "exemplo": "exemplo de prática"
+                }}
+            ],
+            "recursos_recomendados": []
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+class ModuloProposta(ModuloBase):
+    """Módulo específico para Competência 5 - Proposta de Intervenção"""
+    
+    def __init__(self, client: openai.OpenAI):
+        super().__init__(client, CompetenciaModulo.PROPOSTA)
+        self.sistema_prompt = """Você é um tutor especializado na quinta competência do ENEM:
+        elaboração de proposta de intervenção. Você deve analisar:
+        
+        1. ELEMENTOS ESSENCIAIS
+           - Agente (quem realizará a ação)
+           - Ação (o que será feito)
+           - Modo/Meio (como será realizado)
+           - Efeito (resultado esperado)
+           - Detalhamento (especificações)
+        
+        2. CRITÉRIOS DE AVALIAÇÃO
+           - Pertinência ao tema
+           - Detalhamento das ações
+           - Articulação com argumentos
+           - Respeito aos direitos humanos
+           - Exequibilidade
+        
+        3. QUALIDADE DA PROPOSTA
+           - Viabilidade prática
+           - Abrangência
+           - Inovação
+           - Especificidade
+           - Impacto potencial
+        
+        Forneça feedback específico e orientações práticas para desenvolvimento
+        de propostas de intervenção efetivas e bem detalhadas."""
+
+    async def analisar_proposta(self, texto: str, tema: str) -> Dict:
+        """Analisa detalhadamente a proposta de intervenção"""
+        prompt = f"""Analise a proposta de intervenção:
+
+        TEMA: {tema}
+        TEXTO: {texto}
+
+        Retorne um JSON com:
+        {{
+            "elementos_proposta": {{
+                "agentes": [
+                    {{
+                        "texto": "agente identificado",
+                        "posicao": [inicio, fim],
+                        "nivel_detalhamento": 0-200,
+                        "sugestoes": []
+                    }}
+                ],
+                "acoes": [
+                    {{
+                        "texto": "ação proposta",
+                        "posicao": [inicio, fim],
+                        "agente_relacionado": "agente responsável",
+                        "viabilidade": 0-200,
+                        "detalhamento": "análise do detalhamento"
+                    }}
+                ],
+                "modos": [
+                    {{
+                        "texto": "modo de execução",
+                        "posicao": [inicio, fim],
+                        "acao_relacionada": "ação relacionada",
+                        "praticidade": 0-200,
+                        "recursos_necessarios": []
+                    }}
+                ],
+                "efeitos": [
+                    {{
+                        "texto": "efeito esperado",
+                        "posicao": [inicio, fim],
+                        "plausibilidade": 0-200,
+                        "alcance": "análise do alcance"
+                    }}
+                ]
+            }},
+            "avaliacao_criterios": {{
+                "pertinencia_tema": 0-200,
+                "nivel_detalhamento": 0-200,
+                "articulacao_argumentos": 0-200,
+                "respeito_dh": 0-200,
+                "exequibilidade": 0-200,
+                "problemas_identificados": []
+            }},
+            "analise_qualidade": {{
+                "viabilidade": {{
+                    "score": 0-200,
+                    "aspectos_positivos": [],
+                    "aspectos_negativos": [],
+                    "sugestoes": []
+                }},
+                "abrangencia": {{
+                    "score": 0-200,
+                    "alcance": "análise do alcance",
+                    "limitacoes": []
+                }},
+                "inovacao": {{
+                    "score": 0-200,
+                    "aspectos_inovadores": [],
+                    "sugestoes_ampliacao": []
+                }}
+            }},
+            "score_geral": 0-200,
+            "feedback_detalhado": "feedback construtivo",
+            "elementos_destacados": [
+                {{
+                    "tipo": "tipo do elemento",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre o elemento"
+                }}
+            ],
+            "sugestoes_melhoria": []
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return self._processar_resultado_proposta(resultado)
+
+    def _processar_resultado_proposta(self, resultado: Dict) -> Dict:
+        """Processa o resultado da análise da proposta"""
+        elementos_destacados = []
+        
+        # Destaca agentes
+        for agente in resultado["elementos_proposta"].get("agentes", []):
+            elementos_destacados.append({
+                "tipo": "agente",
+                "texto": agente["texto"],
+                "posicao_inicio": agente["posicao"][0],
+                "posicao_fim": agente["posicao"][1],
+                "comentario": f"Agente - Detalhamento: {agente['nivel_detalhamento']}/200"
+            })
+        
+        # Destaca ações
+        for acao in resultado["elementos_proposta"].get("acoes", []):
+            elementos_destacados.append({
+                "tipo": "acao",
+                "texto": acao["texto"],
+                "posicao_inicio": acao["posicao"][0],
+                "posicao_fim": acao["posicao"][1],
+                "comentario": f"Ação - Viabilidade: {acao['viabilidade']}/200"
+            })
+        
+        # Destaca modos
+        for modo in resultado["elementos_proposta"].get("modos", []):
+            elementos_destacados.append({
+                "tipo": "modo",
+                "texto": modo["texto"],
+                "posicao_inicio": modo["posicao"][0],
+                "posicao_fim": modo["posicao"][1],
+                "comentario": f"Modo - Praticidade: {modo['praticidade']}/200"
+            })
+        
+        # Destaca efeitos
+        for efeito in resultado["elementos_proposta"].get("efeitos", []):
+            elementos_destacados.append({
+                "tipo": "efeito",
+                "texto": efeito["texto"],
+                "posicao_inicio": efeito["posicao"][0],
+                "posicao_fim": efeito["posicao"][1],
+                "comentario": f"Efeito - Plausibilidade: {efeito['plausibilidade']}/200"
+            })
+        
+        resultado["elementos_destacados"] = elementos_destacados
+        return resultado
+
+    async def gerar_exercicios_proposta(
+        self,
+        nivel: NivelAluno,
+        foco: List[str]
+    ) -> List[ExercicioRedacao]:
+        """Gera exercícios específicos de elaboração de proposta"""
+        prompt = f"""Crie exercícios de elaboração de proposta para nível {nivel.value}
+        focando em: {', '.join(foco)}
+
+        Retorne um JSON com:
+        {{
+            "exercicios": [
+                {{
+                    "tipo": "proposta",
+                    "nivel": "{nivel.value}",
+                    "enunciado": "enunciado completo",
+                    "contexto": "contextualização do problema",
+                    "instrucoes": ["instrução 1", "instrução 2"],
+                    "criterios": ["critério 1", "critério 2"],
+                    "exemplo_resposta": "exemplo de proposta",
+                    "dicas": ["dica 1", "dica 2"],
+                    "tempo_estimado": tempo_em_minutos
+                }}
+            ],
+            "material_apoio": {{
+                "estruturas_modelo": [],
+                "exemplos_praticos": [],
+                "dicas_detalhamento": []
+            }}
+        }}"""
+
+        resultado = await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+        return [
+            ExercicioRedacao(**ex) 
+            for ex in resultado.get("exercicios", [])
+        ]
+
+    async def verificar_direitos_humanos(self, proposta: str) -> Dict:
+        """Verifica o respeito aos direitos humanos na proposta"""
+        prompt = f"""Analise o respeito aos direitos humanos na proposta:
+
+        PROPOSTA: {proposta}
+
+        Retorne um JSON com:
+        {{
+            "analise_dh": {{
+                "conformidade": 0-200,
+                "problemas_identificados": [
+                    {{
+                        "texto": "trecho problemático",
+                        "posicao": [inicio, fim],
+                        "problema": "descrição do problema",
+                        "sugestao": "como corrigir"
+                    }}
+                ],
+                "aspectos_positivos": []
+            }},
+            "grupos_afetados": [
+                {{
+                    "grupo": "grupo social",
+                    "impacto": "análise do impacto",
+                    "consideracoes": [],
+                    "recomendacoes": []
+                }}
+            ],
+            "elementos_destacados": [
+                {{
+                    "tipo": "violacao_dh",
+                    "texto": "texto destacado",
+                    "posicao_inicio": inicio,
+                    "posicao_fim": fim,
+                    "comentario": "comentário sobre a violação"
+                }}
+            ],
+            "sugestoes_ajuste": []
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+    async def sugerir_detalhamento(self, proposta: str, nivel: NivelAluno) -> Dict:
+        """Sugere formas de detalhar melhor a proposta"""
+        prompt = f"""Sugira formas de detalhar a proposta para nível {nivel.value}:
+
+        PROPOSTA: {proposta}
+
+        Retorne um JSON com:
+        {{
+            "aspectos_detalhamento": [
+                {{
+                    "elemento": "elemento a detalhar",
+                    "situacao_atual": "análise atual",
+                    "sugestoes": [],
+                    "exemplos": []
+                }}
+            ],
+            "modelos_detalhamento": [
+                {{
+                    "tipo": "tipo de detalhamento",
+                    "estrutura": "como estruturar",
+                    "exemplo": "exemplo prático"
+                }}
+            ],
+            "exercicios_pratica": [],
+            "dicas_especificas": []
+        }}"""
+
+        return await self._fazer_requisicao_gpt(prompt, self.sistema_prompt)
+
+# app.py - Arquivo Principal
+
+# Configuração inicial do Streamlit
+st.set_page_config(
+    page_title="Tutor de Redação ENEM",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Inicialização do estado
+def init_session_state():
+    if 'page' not in st.session_state:
+        st.session_state.page = 'home'
+    if 'openai_client' not in st.session_state:
+        st.session_state.openai_client = openai.OpenAI(
+            api_key=st.secrets["OPENAI_API_KEY"]
+        )
+    if 'perfil_aluno' not in st.session_state:
+        st.session_state.perfil_aluno = None
+    if 'ultima_analise' not in st.session_state:
+        st.session_state.ultima_analise = None
 
 def main():
-    try:
-        # Configurações iniciais
-        aplicar_estilos()
+    init_session_state()
+    
+    # Sidebar
+    with st.sidebar:
+        st.title("📝 Tutor ENEM")
         
-        # Sidebar
-        with st.sidebar:
-            st.markdown("### ⚙️ Configurações")
-            if 'tema' not in st.session_state:
-                st.session_state.tema = "Os desafios relacionados à Cultura do cancelamento na internet"
+        if st.session_state.perfil_aluno:
+            st.markdown(f"""
+            ### 👋 Olá, {st.session_state.perfil_aluno.nome}!
+            Nível: {st.session_state.perfil_aluno.nivel.value.title()}
+            """)
             
-            tema = st.text_area(
-                "Tema da Redação",
-                value=st.session_state.tema,
-                help="Digite o tema para análise mais precisa",
-                height=100
+            menu_items = [
+                "Dashboard",
+                "Nova Redação",
+                "Competência 1 - Norma Culta",
+                "Competência 2 - Compreensão",
+                "Competência 3 - Argumentação",
+                "Competência 4 - Coesão",
+                "Competência 5 - Proposta",
+                "Exercícios",
+                "Meu Progresso"
+            ]
+        else:
+            menu_items = ["Início"]
+        
+        menu_choice = st.radio("Menu", menu_items)
+        st.session_state.page = menu_choice.lower().replace(" ", "_")
+        
+        if st.session_state.perfil_aluno:
+            if st.button("Sair"):
+                st.session_state.perfil_aluno = None
+                st.experimental_rerun()
+    
+    # Conteúdo principal
+    if st.session_state.page == 'inicio':
+        show_inicio_page()
+    elif st.session_state.page == 'dashboard':
+        show_dashboard_page()
+    elif st.session_state.page == 'nova_redação':
+        show_nova_redacao_page()
+    elif st.session_state.page.startswith('competência'):
+        show_competencia_page(st.session_state.page)
+    elif st.session_state.page == 'exercícios':
+        show_exercicios_page()
+    elif st.session_state.page == 'meu_progresso':
+        show_progresso_page()
+
+def show_inicio_page():
+    st.title("🎓 Bem-vindo ao Tutor de Redação ENEM")
+    
+    st.markdown("""
+    ### Comece sua jornada de preparação!
+    
+    Este tutor inteligente vai te ajudar a desenvolver todas as competências 
+    necessárias para uma excelente redação no ENEM.
+    """)
+    
+    with st.form("cadastro_inicial"):
+        nome = st.text_input("Como podemos te chamar?")
+        nivel = st.selectbox(
+            "Qual seu nível atual em redação?",
+            ["Iniciante", "Intermediário", "Avançado"]
+        )
+        
+        texto_diagnostico = st.text_area(
+            "Para começar, escreva um pequeno parágrafo sobre qualquer tema atual:",
+            height=150,
+            help="Isso nos ajudará a personalizar seu aprendizado"
+        )
+        
+        submitted = st.form_submit_button("Começar")
+        
+        if submitted and nome and texto_diagnostico:
+            with st.spinner("Analisando seu perfil..."):
+                try:
+                    nivel_enum = NivelAluno[nivel.upper()]
+                    st.session_state.perfil_aluno = PerfilAluno(
+                        nome=nome,
+                        nivel=nivel_enum,
+                        data_inicio=datetime.now(),
+                        progresso_competencias={},
+                        historico_redacoes=[],
+                        feedback_acumulado={},
+                        ultima_atividade=datetime.now(),
+                        total_exercicios=0,
+                        medalhas=[]
+                    )
+                    st.success("Perfil criado com sucesso!")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"Erro ao criar perfil: {str(e)}")
+
+def show_dashboard_page():
+    st.title("📊 Dashboard")
+    
+    # Layout em colunas
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Gráfico de progresso por competência
+        competencias_data = {
+            comp.value: st.session_state.perfil_aluno.progresso_competencias.get(
+                comp, ProgressoCompetencia(0, 0, 0, [], [], datetime.now())
+            ).nivel
+            for comp in CompetenciaModulo
+        }
+        
+        fig = go.Figure(data=[
+            go.Bar(
+                x=list(competencias_data.keys()),
+                y=list(competencias_data.values()),
+                marker_color='rgb(26, 118, 255)'
             )
-            if tema != st.session_state.tema:
-                st.session_state.tema = tema
+        ])
         
-        # Interface principal
-        st.title("📝 Editor Interativo de Redação ENEM")
-        st.markdown("""
-            Este editor analisa sua redação em tempo real, fornecendo feedback 
-            detalhado para cada parágrafo, incluindo:
-            - Análise de argumentos (A1 e A2)
-            - Identificação e classificação de conectivos
-            - Correção gramatical
-            - Sugestões de melhoria estrutural
-            
-            **Como usar:**
-            1. Digite seu texto no editor abaixo
-            2. Separe os parágrafos com uma linha em branco
-            3. Receba feedback instantâneo sobre cada parágrafo
-        """)
-        
-        # Editor
-        texto = st.text_area(
-            "Digite sua redação aqui:",
-            height=300,
-            key="editor_redacao",
-            help="Digite ou cole seu texto. Separe os parágrafos com uma linha em branco."
+        fig.update_layout(
+            title="Progresso por Competência",
+            yaxis_title="Nível (0-1)",
+            xaxis_title="Competências"
         )
         
-        if texto:
-            with st.spinner("📊 Analisando sua redação..."):
-                paragrafos = [p.strip() for p in texto.split('\n\n') if p.strip()]
-                
-                if paragrafos:
-                    # Tabs para cada parágrafo
-                    tabs = st.tabs([
-                        f"📄 {detectar_tipo_paragrafo(p, i).title()}" 
-                        for i, p in enumerate(paragrafos)
-                    ])
-                    
-                    # Análise em cada tab
-                    for i, (tab, paragrafo) in enumerate(zip(tabs, paragrafos)):
-                        with tab:
-                            tipo = detectar_tipo_paragrafo(paragrafo, i)
-                            
-                            # Identificador visual do tipo de parágrafo
-                            icones = {
-                                "introducao": "🎯",
-                                "desenvolvimento1": "💡",
-                                "desenvolvimento2": "📚",
-                                "conclusao": "✨"
-                            }
-                            st.markdown(f"### {icones.get(tipo, '📝')} {tipo.title()}")
-                            
-                            # Linha divisória
-                            st.markdown("""<hr style="border: 1px solid #464B5C;">""", 
-                                      unsafe_allow_html=True)
-                            
-                            # Análise do parágrafo
-                            analise = analisar_paragrafo_tempo_real(paragrafo, tipo)
-                            mostrar_analise_tempo_real(analise)
-                    
-                    # Resumo geral
-                    st.markdown("---")
-                    st.markdown("### 📊 Visão Geral da Redação")
-                    
-                    # Métricas gerais
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        total_paragrafos = len(paragrafos)
-                        progresso = min(total_paragrafos / 4, 1.0)
-                        st.metric(
-                            "Progresso da Redação",
-                            f"{int(progresso * 100)}%",
-                            f"{total_paragrafos}/4 parágrafos"
-                        )
-                    
-                    with col2:
-                        total_palavras = sum(len(p.split()) for p in paragrafos)
-                        st.metric(
-                            "Total de Palavras",
-                            total_palavras,
-                            "Meta: 2500-3000"
-                        )
-                    
-                    with col3:
-                        if total_paragrafos < 4:
-                            proximo = "Conclusão" if total_paragrafos == 3 else f"Desenvolvimento {total_paragrafos + 1}"
-                            st.info(f"Próximo: {proximo}")
-                        else:
-                            st.success("✅ Estrutura Completa!")
-                    
-                    # Mini mapa dos parágrafos
-                    st.markdown("#### 🗺️ Estrutura da Redação")
-                    cols = st.columns(4)
-                    for i, col in enumerate(cols):
-                        with col:
-                            if i < total_paragrafos:
-                                st.markdown(
-                                    f"""<div style='
-                                        background-color: #1a472a;
-                                        padding: 10px;
-                                        border-radius: 5px;
-                                        text-align: center;
-                                    '>
-                                        {icones.get(detectar_tipo_paragrafo("", i), "📝")}
-                                        <br>
-                                        {detectar_tipo_paragrafo("", i).title()}
-                                    </div>""",
-                                    unsafe_allow_html=True
-                                )
-                            else:
-                                st.markdown(
-                                    """<div style='
-                                        background-color: #262730;
-                                        padding: 10px;
-                                        border-radius: 5px;
-                                        text-align: center;
-                                        opacity: 0.5;
-                                    '>
-                                        ➕
-                                        <br>
-                                        Pendente
-                                    </div>""",
-                                    unsafe_allow_html=True
-                                )
+        st.plotly_chart(fig)
         
-        # Footer
-        st.markdown("---")
-        st.markdown(
-            """<div style='text-align: center; opacity: 0.7;'>
-            Desenvolvido para auxiliar estudantes na preparação para o ENEM.
-            Para feedback e sugestões, use o botão de feedback abaixo de cada análise.
-            </div>""",
-            unsafe_allow_html=True
-        )
+        # Últimas atividades
+        st.subheader("📝 Últimas Atividades")
+        if st.session_state.perfil_aluno.historico_redacoes:
+            for redacao in st.session_state.perfil_aluno.historico_redacoes[-3:]:
+                with st.expander(f"Redação: {redacao.tema}"):
+                    st.write(f"Data: {redacao.data}")
+                    st.write("Notas:")
+                    for comp, nota in redacao.notas.items():
+                        st.write(f"- {comp.value}: {nota}")
+    
+    with col2:
+        # Estatísticas rápidas
+        st.subheader("📈 Estatísticas")
+        
+        total_redacoes = len(st.session_state.perfil_aluno.historico_redacoes)
+        media_geral = sum(
+            sum(r.notas.values()) / len(r.notas)
+            for r in st.session_state.perfil_aluno.historico_redacoes
+        ) / max(total_redacoes, 1)
+        
+        st.metric("Redações Realizadas", total_redacoes)
+        st.metric("Média Geral", f"{media_geral:.1f}")
+        st.metric("Exercícios Completados", 
+                 st.session_state.perfil_aluno.total_exercicios)
+        
+        # Próximas metas
+        st.subheader("🎯 Próximas Metas")
+        metas = gerar_proximas_metas(st.session_state.perfil_aluno)
+        for meta in metas:
+            st.markdown(f"- {meta}")
+
+def gerar_proximas_metas(perfil: PerfilAluno) -> List[str]:
+    """Gera lista de próximas metas baseado no perfil"""
+    metas = []
+    
+    # Identifica competência mais fraca
+    comp_mais_fraca = min(
+        perfil.progresso_competencias.items(),
+        key=lambda x: x[1].nivel
+    )[0]
+    
+    metas.append(f"Melhorar {comp_mais_fraca.value}")
+    
+    # Adiciona metas baseadas no nível
+    if perfil.total_exercicios < 10:
+        metas.append("Completar 10 exercícios")
+    
+    if len(perfil.historico_redacoes) < 3:
+        metas.append("Escrever 3 redações completas")
+    
+    return metas
+
+# Funções auxiliares para análise de redação
+async def analisar_redacao_completa(texto: str, tema: str) -> Dict:
+    """Realiza análise completa da redação usando todos os módulos"""
+    try:
+        resultados = {}
+        
+        # Análise paralela de todas as competências
+        tasks = [
+            analisar_competencia(CompetenciaModulo.NORMA_CULTA, texto, tema),
+            analisar_competencia(CompetenciaModulo.INTERPRETACAO, texto, tema),
+            analisar_competencia(CompetenciaModulo.ARGUMENTACAO, texto, tema),
+            analisar_competencia(CompetenciaModulo.COESAO, texto, tema),
+            analisar_competencia(CompetenciaModulo.PROPOSTA, texto, tema)
+        ]
+        
+        # Aguarda todas as análises
+        analises = await asyncio.gather(*tasks)
+        
+        # Combina resultados
+        for comp, analise in zip(CompetenciaModulo, analises):
+            resultados[comp] = analise
+        
+        return resultados
         
     except Exception as e:
-        logger.error(f"Erro na execução principal: {e}")
-        st.error(
-            "Ocorreu um erro inesperado. Por favor, tente novamente ou entre em contato com o suporte."
+        logger.error(f"Erro na análise completa: {e}")
+        raise
+
+async def analisar_competencia(comp: CompetenciaModulo, texto: str, tema: str) -> Dict:
+    """Analisa uma competência específica"""
+    modulo = obter_modulo_competencia(comp)
+    
+    if comp == CompetenciaModulo.NORMA_CULTA:
+        return await modulo.analisar_texto(texto)
+    elif comp == CompetenciaModulo.INTERPRETACAO:
+        return await modulo.analisar_compreensao(tema, [], texto)
+    elif comp == CompetenciaModulo.ARGUMENTACAO:
+        return await modulo.analisar_argumentacao(texto, tema)
+    elif comp == CompetenciaModulo.COESAO:
+        return await modulo.analisar_coesao(texto)
+    elif comp == CompetenciaModulo.PROPOSTA:
+        return await modulo.analisar_proposta(texto, tema)
+
+def show_nova_redacao_page():
+    st.title("📝 Nova Redação")
+    
+    # Tabs para diferentes etapas
+    tabs = st.tabs([
+        "✍️ Escrita",
+        "🔍 Análise",
+        "📋 Revisão"
+    ])
+    
+    with tabs[0]:  # Aba de Escrita
+        if "tema_atual" not in st.session_state:
+            st.session_state.tema_atual = ""
+        if "texto_atual" not in st.session_state:
+            st.session_state.texto_atual = ""
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            tema = st.text_input(
+                "Tema da redação:",
+                value=st.session_state.tema_atual,
+                help="Digite o tema proposto para a redação"
+            )
+            
+            texto = st.text_area(
+                "Digite sua redação:",
+                value=st.session_state.texto_atual,
+                height=400,
+                help="Digite seu texto. Separe os parágrafos com uma linha em branco."
+            )
+            
+            if st.button("Analisar Redação") and texto and tema:
+                st.session_state.tema_atual = tema
+                st.session_state.texto_atual = texto
+                
+                with st.spinner("Analisando sua redação..."):
+                    try:
+                        # Executa análise assíncrona
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        resultados = loop.run_until_complete(
+                            analisar_redacao_completa(texto, tema)
+                        )
+                        loop.close()
+                        
+                        st.session_state.ultima_analise = resultados
+                        st.success("Análise concluída! Veja os resultados na aba Análise.")
+                        
+                        # Salva redação no histórico
+                        nova_redacao = Redacao(
+                            tema=tema,
+                            texto=texto,
+                            data=datetime.now(),
+                            notas={
+                                comp: resultado.get('score_geral', 0)
+                                for comp, resultado in resultados.items()
+                            },
+                            feedback={
+                                comp: resultado.get('feedback_detalhado', [])
+                                for comp, resultado in resultados.items()
+                            }
+                        )
+                        
+                        st.session_state.perfil_aluno.historico_redacoes.append(
+                            nova_redacao
+                        )
+                        
+                    except Exception as e:
+                        st.error(f"Erro na análise: {str(e)}")
+        
+        with col2:
+            st.markdown("### 💡 Dicas de Escrita")
+            
+            with st.expander("📌 Estrutura Básica"):
+                st.markdown("""
+                1. Introdução
+                   - Contextualização
+                   - Tese clara
+                
+                2. Desenvolvimento
+                   - 2-3 parágrafos
+                   - Argumentos sólidos
+                   - Exemplos concretos
+                
+                3. Conclusão
+                   - Retomada da tese
+                   - Proposta detalhada
+                """)
+            
+            with st.expander("🎯 Critérios de Avaliação"):
+                st.markdown("""
+                - Competência 1: Norma culta
+                - Competência 2: Compreensão da proposta
+                - Competência 3: Argumentação
+                - Competência 4: Coesão textual
+                - Competência 5: Proposta de intervenção
+                """)
+            
+            # Contador de palavras em tempo real
+            if texto:
+                palavras = len(texto.split())
+                st.metric("Palavras", palavras)
+                
+                if palavras < 2000:
+                    st.warning(f"Mínimo recomendado: 2000 palavras")
+                elif palavras > 3000:
+                    st.warning(f"Máximo recomendado: 3000 palavras")
+                else:
+                    st.success("Quantidade de palavras adequada!")
+    
+    with tabs[1]:  # Aba de Análise
+        if "ultima_analise" in st.session_state:
+            show_analise_redacao(
+                st.session_state.ultima_analise,
+                st.session_state.texto_atual
+            )
+        else:
+            st.info("Escreva sua redação e clique em Analisar para ver os resultados.")
+    
+    with tabs[2]:  # Aba de Revisão
+        if "ultima_analise" in st.session_state:
+            show_revisao_redacao(
+                st.session_state.ultima_analise,
+                st.session_state.texto_atual
+            )
+        else:
+            st.info("Primeiro faça a análise para ver sugestões de revisão.")
+
+def show_analise_redacao(analise: Dict, texto: str):
+    """Mostra a análise detalhada da redação"""
+    st.markdown("### 📊 Análise Completa")
+    
+    # Visão geral das notas
+    col1, col2, col3, col4, col5 = st.columns(5)
+    colunas = {
+        CompetenciaModulo.NORMA_CULTA: col1,
+        CompetenciaModulo.INTERPRETACAO: col2,
+        CompetenciaModulo.ARGUMENTACAO: col3,
+        CompetenciaModulo.COESAO: col4,
+        CompetenciaModulo.PROPOSTA: col5
+    }
+    
+    for comp, col in colunas.items():
+        with col:
+            nota = analise[comp].get('score_geral', 0)
+            st.metric(
+                f"Comp. {comp.value[-1]}",
+                f"{nota:.1f}",
+                delta=None if nota >= 160 else f"{160-nota:.1f} para 160"
+            )
+    
+    # Análise por competência
+    for comp in CompetenciaModulo:
+        with st.expander(f"📝 {comp.value.title()}", expanded=True):
+            resultado = analise[comp]
+            
+            # Texto com marcações
+            st.markdown("#### Texto Analisado")
+            texto_marcado = texto
+            for elem in resultado.get('elementos_destacados', []):
+                texto_marcado = destacar_elemento(
+                    texto_marcado,
+                    elem['texto'],
+                    elem['tipo'],
+                    elem['comentario']
+                )
+            st.markdown(texto_marcado, unsafe_allow_html=True)
+            
+            # Feedback detalhado
+            st.markdown("#### 💡 Feedback")
+            st.markdown(resultado.get('feedback_detalhado', ''))
+            
+            # Sugestões de melhoria
+            if resultado.get('sugestoes_melhoria'):
+                st.markdown("#### ✨ Sugestões de Melhoria")
+                for sugestao in resultado['sugestoes_melhoria']:
+                    st.markdown(f"- {sugestao}")
+
+def destacar_elemento(texto: str, trecho: str, tipo: str, comentario: str) -> str:
+    """Destaca elementos no texto com cores e tooltips"""
+    cores = {
+        'erro_gramatical': '#ff6b6b',
+        'conectivo': '#4dabf7',
+        'argumento': '#69db7c',
+        'tese': '#ffd43b',
+        'repertorio': '#da77f2',
+        'proposta': '#4c6ef5',
+        'problema': '#ff8787',
+        'destaque_positivo': '#51cf66',
+        'destaque_negativo': '#ff6b6b'
+    }
+    
+    cor = cores.get(tipo, '#868e96')
+    return texto.replace(
+        trecho,
+        f'<span style="background-color: {cor}33; border-bottom: 2px solid {cor}; '
+        f'cursor: help;" title="{comentario}">{trecho}</span>'
+    )
+
+def mostrar_pagina_competencia(competencia: CompetenciaModulo):
+    st.title(f"📝 {competencia.value.title()}")
+    
+    # Tabs principais
+    tab_aprenda, tab_pratique, tab_analise = st.tabs([
+        "📚 Aprenda",
+        "✍️ Pratique",
+        "🔍 Analise"
+    ])
+    
+    with tab_aprenda:
+        mostrar_conteudo_aprendizagem(competencia)
+    
+    with tab_pratique:
+        mostrar_exercicios_competencia(competencia)
+    
+    with tab_analise:
+        mostrar_analise_competencia(competencia)
+
+def mostrar_conteudo_aprendizagem(competencia: CompetenciaModulo):
+    """Mostra conteúdo didático da competência"""
+    materiais = obter_material_competencia(competencia)
+    
+    # Visão geral
+    st.markdown("### 📋 Visão Geral")
+    st.markdown(materiais['visao_geral'])
+    
+    # Critérios de avaliação
+    with st.expander("🎯 Critérios de Avaliação", expanded=True):
+        for criterio in materiais['criterios']:
+            st.markdown(f"- **{criterio['nome']}**: {criterio['descricao']}")
+    
+    # Exemplos comentados
+    with st.expander("📝 Exemplos Comentados", expanded=True):
+        for exemplo in materiais['exemplos']:
+            st.markdown(f"#### {exemplo['titulo']}")
+            texto_marcado = exemplo['texto']
+            for marcacao in exemplo['marcacoes']:
+                texto_marcado = destacar_elemento(
+                    texto_marcado,
+                    marcacao['trecho'],
+                    marcacao['tipo'],
+                    marcacao['comentario']
+                )
+            st.markdown(texto_marcado, unsafe_allow_html=True)
+            st.markdown(f"**Análise**: {exemplo['analise']}")
+    
+    # Dicas práticas
+    with st.expander("💡 Dicas Práticas", expanded=True):
+        for dica in materiais['dicas']:
+            st.markdown(f"- {dica}")
+
+def mostrar_exercicios_competencia(competencia: CompetenciaModulo):
+    """Mostra exercícios específicos da competência"""
+    if "exercicio_atual" not in st.session_state:
+        st.session_state.exercicio_atual = None
+    
+    # Seleção de foco
+    focos_disponiveis = obter_focos_competencia(competencia)
+    foco_selecionado = st.multiselect(
+        "Escolha os aspectos que deseja praticar:",
+        focos_disponiveis
+    )
+    
+    if foco_selecionado:
+        if st.button("Gerar Novo Exercício"):
+            with st.spinner("Gerando exercício..."):
+                try:
+                    modulo = obter_modulo_competencia(competencia)
+                    exercicios = asyncio.run(modulo.gerar_exercicios(
+                        st.session_state.perfil_aluno.nivel,
+                        foco_selecionado
+                    ))
+                    if exercicios:
+                        st.session_state.exercicio_atual = exercicios[0]
+                except Exception as e:
+                    st.error(f"Erro ao gerar exercício: {str(e)}")
+        
+        if st.session_state.exercicio_atual:
+            mostrar_exercicio(st.session_state.exercicio_atual)
+
+def mostrar_exercicio(exercicio: ExercicioRedacao):
+    """Mostra um exercício específico"""
+    st.markdown(f"### {exercicio.tipo.title()}")
+    
+    # Enunciado e instruções
+    st.markdown(f"**Enunciado**: {exercicio.enunciado}")
+    
+    with st.expander("📋 Instruções", expanded=True):
+        for i, instrucao in enumerate(exercicio.instrucoes, 1):
+            st.markdown(f"{i}. {instrucao}")
+    
+    # Área de resposta
+    resposta = st.text_area(
+        "Sua resposta:",
+        height=200,
+        help="Digite sua resposta aqui"
+    )
+    
+    if st.button("Verificar"):
+        with st.spinner("Analisando sua resposta..."):
+            try:
+                modulo = obter_modulo_competencia(
+                    CompetenciaModulo[exercicio.tipo.upper()]
+                )
+                resultado = asyncio.run(
+                    modulo.analisar_texto(resposta)
+                )
+                mostrar_feedback_exercicio(resultado, exercicio)
+                
+                # Atualiza progresso
+                atualizar_progresso_exercicio(
+                    exercicio.tipo,
+                    resultado.get('score_geral', 0)
+                )
+                
+            except Exception as e:
+                st.error(f"Erro na análise: {str(e)}")
+    
+    # Dicas
+    if exercicio.dicas:
+        with st.expander("💡 Dicas"):
+            for dica in exercicio.dicas:
+                st.markdown(f"- {dica}")
+
+def mostrar_feedback_exercicio(resultado: Dict, exercicio: ExercicioRedacao):
+    """Mostra feedback detalhado do exercício"""
+    st.markdown("### 📊 Resultado")
+    
+    # Score geral
+    score = resultado.get('score_geral', 0)
+    st.progress(score/200)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Pontuação", f"{score:.1f}/200")
+    with col2:
+        if score >= 160:
+            st.success("Excelente! Continue assim!")
+        elif score >= 120:
+            st.info("Bom trabalho! Pode melhorar ainda mais.")
+        else:
+            st.warning("Continue praticando para melhorar.")
+    
+    # Feedback detalhado
+    if 'feedback_detalhado' in resultado:
+        st.markdown("### 💭 Feedback Detalhado")
+        st.markdown(resultado['feedback_detalhado'])
+    
+    # Sugestões de melhoria
+    if 'sugestoes_melhoria' in resultado:
+        st.markdown("### ✨ Sugestões de Melhoria")
+        for sugestao in resultado['sugestoes_melhoria']:
+            st.markdown(f"- {sugestao}")
+    
+    # Exemplo de resposta
+    if exercicio.exemplo_resposta:
+        with st.expander("📝 Exemplo de Resposta"):
+            st.markdown(exercicio.exemplo_resposta)
+
+def mostrar_analise_competencia(competencia: CompetenciaModulo):
+    """Interface para análise específica de uma competência"""
+    st.markdown("### 🔍 Análise Específica")
+    
+    # Área de texto para análise
+    texto = st.text_area(
+        "Digite o texto para análise:",
+        height=200,
+        help=f"Cole aqui o trecho que deseja analisar quanto à {competencia.value}"
+    )
+    
+    if texto:
+        tema = st.text_input(
+            "Tema (se aplicável):",
+            help="Digite o tema para contexto da análise"
         )
+        
+        if st.button("Analisar"):
+            with st.spinner("Analisando..."):
+                try:
+                    modulo = obter_modulo_competencia(competencia)
+                    resultado = asyncio.run(
+                        analisar_competencia(competencia, texto, tema)
+                    )
+                    mostrar_resultado_analise(resultado, texto, competencia)
+                except Exception as e:
+                    st.error(f"Erro na análise: {str(e)}")
 
-if __name__ == "__main__":
-    main()
+def mostrar_resultado_analise(resultado: Dict, texto: str, competencia: CompetenciaModulo):
+    """Mostra o resultado da análise de forma detalhada"""
+    # Score e avaliação geral
+    st.markdown("### 📊 Resultado da Análise")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        score = resultado.get('score_geral', 0)
+        st.metric(
+            "Pontuação",
+            f"{score}/200",
+            delta=f"{score-160}" if score < 160 else "Meta atingida!"
+        )
+    
+    with col2:
+        nivel_analise = "Avançado" if score >= 160 else \
+                       "Intermediário" if score >= 120 else "Básico"
+        st.info(f"Nível: {nivel_analise}")
+    
+    # Texto com marcações
+    st.markdown("### 📝 Texto Analisado")
+    texto_marcado = texto
+    for elem in resultado.get('elementos_destacados', []):
+        texto_marcado = destacar_elemento(
+            texto_marcado,
+            elem['texto'],
+            elem['tipo'],
+            elem['comentario']
+        )
+    st.markdown(texto_marcado, unsafe_allow_html=True)
+    
+    # Análise específica por competência
+    if competencia == CompetenciaModulo.NORMA_CULTA:
+        mostrar_analise_norma_culta(resultado)
+    elif competencia == CompetenciaModulo.INTERPRETACAO:
+        mostrar_analise_interpretacao(resultado)
+    elif competencia == CompetenciaModulo.ARGUMENTACAO:
+        mostrar_analise_argumentacao(resultado)
+    elif competencia == CompetenciaModulo.COESAO:
+        mostrar_analise_coesao(resultado)
+    elif competencia == CompetenciaModulo.PROPOSTA:
+        mostrar_analise_proposta(resultado)
 
+def mostrar_analise_norma_culta(resultado: Dict):
+    """Mostra análise específica da competência 1"""
+    # Erros gramaticais
+    if 'erros_gramaticais' in resultado:
+        with st.expander("🔍 Erros Gramaticais", expanded=True):
+            for erro in resultado['erros_gramaticais']:
+                st.markdown(f"""
+                **Tipo**: {erro['tipo']}  
+                **Trecho**: "{erro['trecho']}"  
+                **Correção**: {erro['correcao']}  
+                **Explicação**: {erro['explicacao']}
+                ---
+                """)
+    
+    # Adequação vocabular
+    if 'adequacao_vocabular' in resultado:
+        with st.expander("📚 Adequação Vocabular"):
+            adq = resultado['adequacao_vocabular']
+            st.metric("Nível de Formalidade", f"{adq['nivel_formalidade']}/5")
+            
+            if adq['problemas_identificados']:
+                st.markdown("**Problemas Identificados:**")
+                for prob in adq['problemas_identificados']:
+                    st.markdown(f"- {prob}")
+            
+            if adq['sugestoes_melhoria']:
+                st.markdown("**Sugestões de Melhoria:**")
+                for sug in adq['sugestoes_melhoria']:
+                    st.markdown(f"- {sug}")
+
+def mostrar_analise_argumentacao(resultado: Dict):
+    """Mostra análise específica da competência 3"""
+    # Estrutura argumentativa
+    if 'estrutura_argumentativa' in resultado:
+        with st.expander("🎯 Estrutura Argumentativa", expanded=True):
+            est = resultado['estrutura_argumentativa']
+            
+            # Tese
+            st.markdown("#### 📌 Tese")
+            st.markdown(f"""
+            **Identificada**: {est['tese']['texto']}  
+            **Clareza**: {est['tese']['clareza']}/200  
+            **Desenvolvimento**: {est['tese']['desenvolvimento']}
+            """)
+            
+            # Argumentos
+            st.markdown("#### 💡 Argumentos")
+            for arg in est['argumentos']:
+                st.markdown(f"""
+                **Tipo**: {arg['tipo']}  
+                **Força**: {arg['forca']}/200  
+                **Desenvolvimento**: {arg['desenvolvimento']}  
+                **Sugestões**: {', '.join(arg['sugestoes'])}
+                ---
+                """)
+    
+    # Repertório sociocultural
+    if 'repertorio_sociocultural' in resultado:
+        with st.expander("📚 Repertório Sociocultural"):
+            rep = resultado['repertorio_sociocultural']
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Pertinência", f"{rep['pertinencia']}/200")
+            with col2:
+                st.metric("Qualidade de Uso", f"{rep['qualidade_uso']}/200")
+            
+            if rep['areas_presentes']:
+                st.markdown("**Áreas do Conhecimento Utilizadas:**")
+                for area in rep['areas_presentes']:
+                    st.markdown(f"- {area}")
+            
+            if rep['sugestoes_ampliacao']:
+                st.markdown("**Sugestões de Ampliação:**")
+                for sug in rep['sugestoes_ampliacao']:
+                    st.markdown(f"- {sug}")
+
+def atualizar_progresso(
+    perfil: PerfilAluno,
+    competencia: CompetenciaModulo,
+    score: float,
+    feedback: List[str]
+):
+    """Atualiza o progresso do aluno em uma competência"""
+    if competencia not in perfil.progresso_competencias:
+        perfil.progresso_competencias[competencia] = ProgressoCompetencia(
+            nivel=0.0,
+            exercicios_feitos=0,
+            ultima_avaliacao=0.0,
+            pontos_fortes=[],
+            pontos_fracos=[],
+            data_atualizacao=datetime.now()
+        )
+    
+    progresso = perfil.progresso_competencias[competencia]
+    
+    # Atualiza nível (média móvel)
+    alpha = 0.3  # peso para nova avaliação
+    progresso.nivel = (1 - alpha) * progresso.nivel + alpha * (score / 200)
+    
+    # Atualiza última avaliação
+    progresso.ultima_avaliacao = score / 200
+    progresso.data_atualizacao = datetime.now()
+    
+    # Atualiza feedback acumulado
+    if competencia not in perfil.feedback_acumulado:
+        perfil.feedback_acumulado[competencia] = []
+    
+    perfil.feedback_acumulado[competencia].extend(feedback)
+    
+    # Mantém apenas os últimos 10 feedbacks
+    perfil.feedback_acumulado[competencia] = \
+        perfil.feedback_acumulado[competencia][-10:]
+    
+    # Verifica conquistas
+    verificar_conquistas(perfil, competencia, score)
+
+def verificar_conquistas(
+    perfil: PerfilAluno,
+    competencia: CompetenciaModulo,
+    score: float
+):
+    """Verifica e atribui conquistas baseadas no desempenho"""
+    if not perfil.medalhas:
+        perfil.medalhas = []
+    
+    # Conquistas por competência
+    if score >= 180:
+        medalha = f"Mestre em {competencia.value}"
+        if medalha not in perfil.medalhas:
+            perfil.medalhas.append(medalha)
+            st.balloons()
+            st.success(f"🏆 Nova conquista: {medalha}!")
+    
+    elif score >= 160:
+        medalha = f"Especialista em {competencia.value}"
+        if medalha not in perfil.medalhas:
+            perfil.medalhas.append(medalha)
+            st.success(f"🎖️ Nova conquista: {medalha}!")
+    
+    # Conquistas gerais
+    if len(perfil.historico_redacoes) == 10:
+        medalha = "Escritor Dedicado"
+        if medalha not in perfil.medalhas:
+            perfil.medalhas.append(medalha)
+            st.success(f"📝 Nova conquista: {medalha}!")
+    
+    if perfil.total_exercicios >= 50:
+        medalha = "Mestre dos Exercícios"
+        if medalha not in perfil.medalhas:
+            perfil.medalhas.append(medalha)
+            st.success(f"✨ Nova conquista: {medalha}!")
 
