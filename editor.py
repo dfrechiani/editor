@@ -18,6 +18,17 @@ from pathlib import Path
 import base64
 from io import BytesIO
 
+
+import streamlit as st
+
+# Configuração da página DEVE ser a primeira chamada Streamlit
+st.set_page_config(
+    page_title="Tutor de Redação ENEM",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
