@@ -1582,13 +1582,7 @@ class ModuloProposta(ModuloBase):
 
 # app.py - Arquivo Principal
 
-# Configuração inicial do Streamlit
-st.set_page_config(
-    page_title="Tutor de Redação ENEM",
-    page_icon="📝",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+
 
 # Inicialização do estado
 def init_session_state():
