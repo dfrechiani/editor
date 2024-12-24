@@ -1,23 +1,17 @@
 import streamlit as st
-import openai
 from openai import OpenAI
 import sys
-from typing import Dict
+from typing import Dict, Optional, List
 
-# Configuração da chave API
+# Configuração e verificação da API key
 try:
-    openai.api_key = st.secrets.OPENAI_API_KEY
-    if not openai.api_key:
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    if not client.api_key:
         st.error("Chave da API não encontrada!")
         sys.exit(1)
 except Exception as e:
     st.error(f"Erro ao configurar a chave API: {e}")
     sys.exit(1)
-st.set_page_config(
-    page_title="Assistente de Redação ENEM",
-    page_icon="📝",
-    layout="wide"
-)
 
 class RedacaoAssistant:
     def __init__(self):
@@ -25,7 +19,7 @@ class RedacaoAssistant:
         Seu papel é conduzir uma conversa interativa com o estudante, ajudando-o a desenvolver sua redação passo a passo.
         Seja específico nas orientações e mantenha um tom encorajador."""
 
-    async def chat_with_user(self, prompt: str, history: list = None) -> Dict:
+    async def chat_with_user(self, prompt: str, history: Optional[List[Dict]] = None) -> Dict:
         if history is None:
             history = []
         
@@ -36,7 +30,7 @@ class RedacaoAssistant:
         ]
 
         try:
-            response = await openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=messages,
                 temperature=0.7
@@ -44,6 +38,11 @@ class RedacaoAssistant:
             return {"status": "success", "response": response.choices[0].message.content}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+st.set_page_config(
+    page_title="Assistente de Redação ENEM",
+    page_icon="📝",
+    layout="wide"
+)
 
 # Inicialização do estado
 if 'stage' not in st.session_state:
