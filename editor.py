@@ -3,38 +3,28 @@ import openai
 import asyncio
 from typing import Dict
 
-# Configuração do OpenAI usando o secret do Streamlit
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Configuração da página
 st.set_page_config(
     page_title="Assistente de Redação ENEM",
     page_icon="📝",
     layout="wide"
 )
 
-class RedacaoAnalyzer:
+class RedacaoAssistant:
     def __init__(self):
-        self.system_prompt = """Você é um assistente especializado em redação do ENEM.
-        Analise o texto considerando as 5 competências:
-        
-        1. Domínio da norma culta
-        2. Compreensão do tema e estrutura dissertativa
-        3. Argumentação
-        4. Coesão textual
-        5. Proposta de intervenção
-        
-        Para cada parágrafo, forneça:
-        - Pontos positivos
-        - Sugestões de melhoria
-        - Dicas específicas para aprimoramento
-        
-        Use uma linguagem amigável e construtiva."""
+        self.system_prompt = """Você é um assistente especializado e amigável de redação do ENEM.
+        Seu papel é conduzir uma conversa interativa com o estudante, ajudando-o a desenvolver sua redação passo a passo.
+        Seja específico nas orientações e mantenha um tom encorajador."""
 
-    async def analyze_text(self, text: str) -> Dict:
+    async def chat_with_user(self, prompt: str, history: list = None) -> Dict:
+        if history is None:
+            history = []
+        
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"Analise o seguinte texto para a redação do ENEM: {text}"}
+            *history,
+            {"role": "user", "content": prompt}
         ]
 
         try:
@@ -43,143 +33,232 @@ class RedacaoAnalyzer:
                 messages=messages,
                 temperature=0.7
             )
-            return {"status": "success", "feedback": response.choices[0].message.content}
+            return {"status": "success", "response": response.choices[0].message.content}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    async def get_competency_scores(self, text: str) -> Dict:
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"""Avalie as 5 competências do ENEM para o seguinte texto, 
-            dando uma nota de 0 a 200 para cada e uma breve justificativa: {text}"""}
-        ]
+# Inicialização do estado
+if 'stage' not in st.session_state:
+    st.session_state.stage = 'inicio'
+if 'assistant' not in st.session_state:
+    st.session_state.assistant = RedacaoAssistant()
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'redacao' not in st.session_state:
+    st.session_state.redacao = {
+        'tema': '',
+        'introducao': '',
+        'desenvolvimento1': '',
+        'desenvolvimento2': '',
+        'conclusao': ''
+    }
 
-        try:
-            response = await openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=messages,
-                temperature=0.3
-            )
-            return {"status": "success", "scores": response.choices[0].message.content}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+# Interface Principal
+st.title("📝 Assistente Interativo de Redação ENEM")
 
-# Inicialização do estado da sessão
-if 'redacao_text' not in st.session_state:
-    st.session_state.redacao_text = ""
-if 'feedback' not in st.session_state:
-    st.session_state.feedback = ""
-if 'analyzer' not in st.session_state:
-    st.session_state.analyzer = RedacaoAnalyzer()
-if 'tema' not in st.session_state:
-    st.session_state.tema = ""
+# Sidebar com progresso
+st.sidebar.title("Progresso da Redação")
+progress_items = {
+    'inicio': 'Planejamento Inicial',
+    'introducao': 'Introdução',
+    'desenvolvimento1': '1º Parágrafo',
+    'desenvolvimento2': '2º Parágrafo',
+    'conclusao': 'Conclusão',
+    'revisao': 'Revisão Final'
+}
 
-# Função para atualizar o feedback
-async def update_feedback():
-    if st.session_state.redacao_text:
-        feedback = await st.session_state.analyzer.analyze_text(st.session_state.redacao_text)
-        if feedback["status"] == "success":
-            st.session_state.feedback = feedback["feedback"]
-        else:
-            st.session_state.feedback = "Erro na análise. Tente novamente."
-
-# Interface principal
-st.title("📝 Assistente de Redação ENEM")
-
-# Área do tema
-st.session_state.tema = st.text_input("Digite o tema da redação:", st.session_state.tema)
-
-# Layout em duas colunas
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("Sua Redação")
-    redacao_text = st.text_area(
-        "Digite sua redação aqui",
-        height=400,
-        key="redacao_input",
-        on_change=lambda: asyncio.run(update_feedback())
-    )
-
-with col2:
-    st.subheader("Feedback do Assistente")
-    if st.session_state.feedback:
-        st.markdown(st.session_state.feedback)
-
-    if st.button("Analisar Competências"):
-        with st.spinner("Analisando competências..."):
-            scores = asyncio.run(
-                st.session_state.analyzer.get_competency_scores(st.session_state.redacao_text)
-            )
-            if scores["status"] == "success":
-                st.markdown("### Notas por Competência")
-                st.markdown(scores["scores"])
-
-# Área de estatísticas
-st.sidebar.title("Estatísticas")
-if st.session_state.redacao_text:
-    word_count = len(st.session_state.redacao_text.split())
-    char_count = len(st.session_state.redacao_text)
-    paragraph_count = len(st.session_state.redacao_text.split('\n\n')) + 1
-    
-    st.sidebar.metric("Palavras", word_count)
-    st.sidebar.metric("Caracteres", char_count)
-    st.sidebar.metric("Parágrafos", paragraph_count)
-    
-    # Avaliação rápida do tamanho
-    if word_count < 250:
-        st.sidebar.warning("⚠️ Texto muito curto. Procure desenvolver mais.")
-    elif word_count > 350:
-        st.sidebar.warning("⚠️ Texto muito longo. Considere sintetizar.")
+for key, value in progress_items.items():
+    if st.session_state.stage == key:
+        st.sidebar.markdown(f"**→ {value}**")
+    elif list(progress_items.keys()).index(key) < list(progress_items.keys()).index(st.session_state.stage):
+        st.sidebar.markdown(f"✅ {value}")
     else:
-        st.sidebar.success("✅ Tamanho adequado!")
+        st.sidebar.markdown(f"◽ {value}")
 
-# Dicas e recomendações
-st.sidebar.markdown("""
-### Dicas para Nota 1000
-1. **Introdução**:
-   - Contextualize o tema
-   - Apresente sua tese
-   
-2. **Desenvolvimento**:
-   - Use repertório sociocultural
-   - Conecte os parágrafos
-   
-3. **Conclusão**:
-   - Proposta de intervenção completa
-   - Retome aspectos principais
-""")
+# Função para chat
+async def get_assistant_response(prompt):
+    response = await st.session_state.assistant.chat_with_user(
+        prompt,
+        st.session_state.chat_history
+    )
+    if response["status"] == "success":
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        st.session_state.chat_history.append({"role": "assistant", "content": response["response"]})
+        return response["response"]
+    return "Desculpe, houve um erro. Tente novamente."
 
-# Área de ajuda
-with st.expander("Como usar o assistente"):
-    st.markdown("""
-    ### Instruções de Uso
+# Área principal - Diferentes estágios da redação
+if st.session_state.stage == 'inicio':
+    st.markdown("### 🎯 Vamos começar sua redação!")
     
-    1. **Digite o tema** no campo superior
-    2. **Escreva sua redação** no editor principal
-    3. Receba **feedback em tempo real**
-    4. Use o botão **Analisar Competências** para avaliação detalhada
-    5. Acompanhe as **estatísticas** na barra lateral
+    if not st.session_state.redacao['tema']:
+        tema_input = st.text_input("Sobre qual tema você quer escrever?")
+        if tema_input:
+            st.session_state.redacao['tema'] = tema_input
+            response = asyncio.run(get_assistant_response(
+                f"O tema da redação é: {tema_input}. Me ajude a planejar essa redação, sugerindo possíveis argumentos e repertório sociocultural relevante."
+            ))
+            st.markdown(response)
     
-    ### Estrutura Recomendada
-    
-    - **Introdução**: 1 parágrafo
-    - **Desenvolvimento**: 2-3 parágrafos
-    - **Conclusão**: 1 parágrafo
-    
-    ### Critérios de Avaliação
-    
-    1. Domínio da norma culta (200 pontos)
-    2. Compreensão do tema (200 pontos)
-    3. Argumentação (200 pontos)
-    4. Coesão textual (200 pontos)
-    5. Proposta de intervenção (200 pontos)
-    """)
+    if st.session_state.redacao['tema']:
+        st.markdown(f"**Tema escolhido:** {st.session_state.redacao['tema']}")
+        
+        user_input = st.text_input("Pode me fazer perguntas sobre o tema ou pedir sugestões")
+        if user_input:
+            response = asyncio.run(get_assistant_response(user_input))
+            st.markdown(response)
+        
+        if st.button("Começar a escrever a introdução"):
+            st.session_state.stage = 'introducao'
+            st.rerun()
 
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center'>
-    <p>Desenvolvido para auxiliar estudantes na preparação para o ENEM</p>
-</div>
-""", unsafe_allow_html=True)
+elif st.session_state.stage == 'introducao':
+    st.markdown("### 📝 Introdução")
+    st.markdown("Escreva um parágrafo introdutório que contextualize o tema e apresente sua tese.")
+    
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        introducao = st.text_area("Seu parágrafo introdutório:", 
+                                value=st.session_state.redacao['introducao'],
+                                height=200)
+        if introducao != st.session_state.redacao['introducao']:
+            st.session_state.redacao['introducao'] = introducao
+            if introducao:
+                response = asyncio.run(get_assistant_response(
+                    f"Analise este parágrafo introdutório: {introducao}"
+                ))
+                st.session_state.last_feedback = response
+    
+    with col2:
+        if 'last_feedback' in st.session_state:
+            st.markdown("### Feedback")
+            st.markdown(st.session_state.last_feedback)
+    
+    if st.button("Avançar para o desenvolvimento"):
+        st.session_state.stage = 'desenvolvimento1'
+        st.rerun()
+
+elif st.session_state.stage == 'desenvolvimento1':
+    st.markdown("### 📝 Primeiro Parágrafo de Desenvolvimento")
+    
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        desenvolvimento1 = st.text_area("Desenvolva seu primeiro argumento:", 
+                                      value=st.session_state.redacao['desenvolvimento1'],
+                                      height=200)
+        if desenvolvimento1 != st.session_state.redacao['desenvolvimento1']:
+            st.session_state.redacao['desenvolvimento1'] = desenvolvimento1
+            if desenvolvimento1:
+                response = asyncio.run(get_assistant_response(
+                    f"Analise este parágrafo de desenvolvimento: {desenvolvimento1}"
+                ))
+                st.session_state.last_feedback = response
+    
+    with col2:
+        if 'last_feedback' in st.session_state:
+            st.markdown("### Feedback")
+            st.markdown(st.session_state.last_feedback)
+    
+    if st.button("Avançar para o segundo parágrafo"):
+        st.session_state.stage = 'desenvolvimento2'
+        st.rerun()
+
+elif st.session_state.stage == 'desenvolvimento2':
+    st.markdown("### 📝 Segundo Parágrafo de Desenvolvimento")
+    
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        desenvolvimento2 = st.text_area("Desenvolva seu segundo argumento:", 
+                                      value=st.session_state.redacao['desenvolvimento2'],
+                                      height=200)
+        if desenvolvimento2 != st.session_state.redacao['desenvolvimento2']:
+            st.session_state.redacao['desenvolvimento2'] = desenvolvimento2
+            if desenvolvimento2:
+                response = asyncio.run(get_assistant_response(
+                    f"Analise este segundo parágrafo: {desenvolvimento2}"
+                ))
+                st.session_state.last_feedback = response
+    
+    with col2:
+        if 'last_feedback' in st.session_state:
+            st.markdown("### Feedback")
+            st.markdown(st.session_state.last_feedback)
+    
+    if st.button("Avançar para a conclusão"):
+        st.session_state.stage = 'conclusao'
+        st.rerun()
+
+elif st.session_state.stage == 'conclusao':
+    st.markdown("### 📝 Conclusão")
+    st.markdown("Apresente sua proposta de intervenção.")
+    
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        conclusao = st.text_area("Escreva sua conclusão:", 
+                               value=st.session_state.redacao['conclusao'],
+                               height=200)
+        if conclusao != st.session_state.redacao['conclusao']:
+            st.session_state.redacao['conclusao'] = conclusao
+            if conclusao:
+                response = asyncio.run(get_assistant_response(
+                    f"Analise esta conclusão: {conclusao}"
+                ))
+                st.session_state.last_feedback = response
+    
+    with col2:
+        if 'last_feedback' in st.session_state:
+            st.markdown("### Feedback")
+            st.markdown(st.session_state.last_feedback)
+    
+    if st.button("Fazer revisão final"):
+        st.session_state.stage = 'revisao'
+        st.rerun()
+
+elif st.session_state.stage == 'revisao':
+    st.markdown("### 📋 Revisão Final")
+    
+    texto_completo = f"""
+    {st.session_state.redacao['introducao']}
+
+    {st.session_state.redacao['desenvolvimento1']}
+
+    {st.session_state.redacao['desenvolvimento2']}
+
+    {st.session_state.redacao['conclusao']}
+    """
+    
+    col1, col2 = st.columns([2,1])
+    
+    with col1:
+        st.markdown("### Sua Redação Completa")
+        st.text_area("Texto final:", value=texto_completo, height=400)
+    
+    with col2:
+        if st.button("Analisar redação completa"):
+            response = asyncio.run(get_assistant_response(
+                f"Faça uma análise completa desta redação, avaliando todas as competências do ENEM: {texto_completo}"
+            ))
+            st.markdown("### Análise Final")
+            st.markdown(response)
+
+# Botão para recomeçar (sempre visível)
+if st.sidebar.button("Recomeçar Redação"):
+    for key in st.session_state.keys():
+        del st.session_state[key]
+    st.rerun()
+
+# Estatísticas na sidebar
+if st.session_state.redacao['introducao']:
+    total_words = len(' '.join([
+        st.session_state.redacao['introducao'],
+        st.session_state.redacao['desenvolvimento1'],
+        st.session_state.redacao['desenvolvimento2'],
+        st.session_state.redacao['conclusao']
+    ]).split())
+    
+    st.sidebar.markdown("### Estatísticas")
+    st.sidebar.metric("Total de palavras", total_words)
