@@ -3,15 +3,15 @@ from openai import OpenAI
 import sys
 from typing import Dict, Optional, List
 
-# Configuração e verificação da API key
-try:
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-    if not client.api_key:
-        st.error("Chave da API não encontrada!")
-        sys.exit(1)
-except Exception as e:
-    st.error(f"Erro ao configurar a chave API: {e}")
-    sys.exit(1)
+# Configuração da página
+st.set_page_config(
+    page_title="Assistente de Redação ENEM",
+    page_icon="📝",
+    layout="wide"
+)
+
+# Configuração do cliente OpenAI
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 class RedacaoAssistant:
     def __init__(self):
@@ -19,7 +19,7 @@ class RedacaoAssistant:
         Seu papel é conduzir uma conversa interativa com o estudante, ajudando-o a desenvolver sua redação passo a passo.
         Seja específico nas orientações e mantenha um tom encorajador."""
 
-    async def chat_with_user(self, prompt: str, history: Optional[List[Dict]] = None) -> Dict:
+    def chat_with_user(self, prompt: str, history: Optional[List[Dict]] = None) -> Dict:
         if history is None:
             history = []
         
@@ -38,13 +38,8 @@ class RedacaoAssistant:
             return {"status": "success", "response": response.choices[0].message.content}
         except Exception as e:
             return {"status": "error", "message": str(e)}
-st.set_page_config(
-    page_title="Assistente de Redação ENEM",
-    page_icon="📝",
-    layout="wide"
-)
 
-# Inicialização do estado
+# Inicialização do estado da sessão
 if 'stage' not in st.session_state:
     st.session_state.stage = 'inicio'
 if 'assistant' not in st.session_state:
@@ -82,17 +77,13 @@ for key, value in progress_items.items():
     else:
         st.sidebar.markdown(f"◽ {value}")
 
-# Função para chat
-async def get_assistant_response(prompt):
-    response = await st.session_state.assistant.chat_with_user(
-        prompt,
-        st.session_state.chat_history
-    )
+def get_assistant_response(prompt: str) -> str:
+    response = st.session_state.assistant.chat_with_user(prompt, st.session_state.chat_history)
     if response["status"] == "success":
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         st.session_state.chat_history.append({"role": "assistant", "content": response["response"]})
         return response["response"]
-    return "Desculpe, houve um erro. Tente novamente."
+    return f"Desculpe, houve um erro: {response['message']}. Tente novamente."
 
 # Área principal - Diferentes estágios da redação
 if st.session_state.stage == 'inicio':
@@ -102,18 +93,24 @@ if st.session_state.stage == 'inicio':
         tema_input = st.text_input("Sobre qual tema você quer escrever?")
         if tema_input:
             st.session_state.redacao['tema'] = tema_input
-            response = asyncio.run(get_assistant_response(
-                f"O tema da redação é: {tema_input}. Me ajude a planejar essa redação, sugerindo possíveis argumentos e repertório sociocultural relevante."
-            ))
-            st.markdown(response)
+            with st.spinner("Analisando o tema..."):
+                response = get_assistant_response(
+                    f"""O tema da redação é: {tema_input}. 
+                    Por favor, sugira:
+                    1. Possíveis argumentos
+                    2. Repertório sociocultural relevante
+                    3. Como estruturar a introdução"""
+                )
+                st.markdown(response)
     
     if st.session_state.redacao['tema']:
         st.markdown(f"**Tema escolhido:** {st.session_state.redacao['tema']}")
         
         user_input = st.text_input("Pode me fazer perguntas sobre o tema ou pedir sugestões")
         if user_input:
-            response = asyncio.run(get_assistant_response(user_input))
-            st.markdown(response)
+            with st.spinner("Processando sua pergunta..."):
+                response = get_assistant_response(user_input)
+                st.markdown(response)
         
         if st.button("Começar a escrever a introdução"):
             st.session_state.stage = 'introducao'
@@ -132,9 +129,9 @@ elif st.session_state.stage == 'introducao':
         if introducao != st.session_state.redacao['introducao']:
             st.session_state.redacao['introducao'] = introducao
             if introducao:
-                response = asyncio.run(get_assistant_response(
+                response = get_assistant_response(
                     f"Analise este parágrafo introdutório: {introducao}"
-                ))
+                )
                 st.session_state.last_feedback = response
     
     with col2:
@@ -158,9 +155,9 @@ elif st.session_state.stage == 'desenvolvimento1':
         if desenvolvimento1 != st.session_state.redacao['desenvolvimento1']:
             st.session_state.redacao['desenvolvimento1'] = desenvolvimento1
             if desenvolvimento1:
-                response = asyncio.run(get_assistant_response(
+                response = get_assistant_response(
                     f"Analise este parágrafo de desenvolvimento: {desenvolvimento1}"
-                ))
+                )
                 st.session_state.last_feedback = response
     
     with col2:
@@ -184,9 +181,9 @@ elif st.session_state.stage == 'desenvolvimento2':
         if desenvolvimento2 != st.session_state.redacao['desenvolvimento2']:
             st.session_state.redacao['desenvolvimento2'] = desenvolvimento2
             if desenvolvimento2:
-                response = asyncio.run(get_assistant_response(
+                response = get_assistant_response(
                     f"Analise este segundo parágrafo: {desenvolvimento2}"
-                ))
+                )
                 st.session_state.last_feedback = response
     
     with col2:
@@ -211,9 +208,9 @@ elif st.session_state.stage == 'conclusao':
         if conclusao != st.session_state.redacao['conclusao']:
             st.session_state.redacao['conclusao'] = conclusao
             if conclusao:
-                response = asyncio.run(get_assistant_response(
+                response = get_assistant_response(
                     f"Analise esta conclusão: {conclusao}"
-                ))
+                )
                 st.session_state.last_feedback = response
     
     with col2:
@@ -246,9 +243,9 @@ elif st.session_state.stage == 'revisao':
     
     with col2:
         if st.button("Analisar redação completa"):
-            response = asyncio.run(get_assistant_response(
+            response = get_assistant_response(
                 f"Faça uma análise completa desta redação, avaliando todas as competências do ENEM: {texto_completo}"
-            ))
+            )
             st.markdown("### Análise Final")
             st.markdown(response)
 
