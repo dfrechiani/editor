@@ -1,10 +1,16 @@
 import streamlit as st
 import openai
-import asyncio
-from typing import Dict
+import sys
 
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-
+# Configuração da chave API
+try:
+    openai.api_key = st.secrets.OPENAI_API_KEY
+    if not openai.api_key:
+        st.error("Chave da API não encontrada!")
+        sys.exit(1)
+except Exception as e:
+    st.error(f"Erro ao configurar a chave API: {e}")
+    sys.exit(1)
 st.set_page_config(
     page_title="Assistente de Redação ENEM",
     page_icon="📝",
