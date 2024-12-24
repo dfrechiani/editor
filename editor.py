@@ -10,8 +10,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# Configuração do cliente OpenAI
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# Configuração do cliente OpenAI com base_url
+try:
+    api_key = st.secrets["OPENAI_API_KEY"]
+    base_url = "https://api.openai.com/v1"  # URL base padrão da OpenAI
+    
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url
+    )
+except Exception as e:
+    st.error(f"Erro ao configurar o cliente OpenAI: {str(e)}")
+    sys.exit(1)
 
 class RedacaoAssistant:
     def __init__(self):
