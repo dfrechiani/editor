@@ -1,6 +1,8 @@
 import streamlit as st
 import openai
+from openai import OpenAI
 import sys
+from typing import Dict
 
 # Configuração da chave API
 try:
