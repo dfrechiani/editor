@@ -3,7 +3,7 @@ import streamlit as st
 import logging
 import json
 from typing import Dict, Any
-from anthropic import Anthropic
+from anthropic import Client 
 from elevenlabs import set_api_key
 
 # Configuração inicial do Streamlit
