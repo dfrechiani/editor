@@ -8,3 +8,4 @@ elevenlabs==1.13.5
 python-dotenv==1.0.0
 typing-extensions==4.5.0
 https://github.com/explosion/spacy-models/releases/download/pt_core_news_sm-3.4.0/pt_core_news_sm-3.4.0-py3-none-any.whl
+python-3.10
