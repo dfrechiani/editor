@@ -1,278 +1,639 @@
+import os
 import streamlit as st
-from openai import OpenAI
-import sys
-from typing import Dict, Optional, List
+import logging
+import json
+from datetime import datetime
+from typing import Dict, List, Any
+import plotly.graph_objects as go
+from collections import Counter
+import spacy
+from anthropic import Anthropic
+from elevenlabs import generate
 
-# Configuração da página
+# Configuração inicial do Streamlit
 st.set_page_config(
-    page_title="Assistente de Redação ENEM",
+    page_title="Sistema de Redação ENEM",
     page_icon="📝",
     layout="wide"
 )
 
-# Configuração do cliente OpenAI com base_url
+# Configuração de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Inicialização do cliente Anthropic
 try:
-    api_key = st.secrets["OPENAI_API_KEY"]
-    base_url = "https://api.openai.com/v1"  # URL base padrão da OpenAI
+    anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
     
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url
-    )
+    # Configurações do modelo SpaCy
+    if 'nlp' not in st.session_state:
+        st.session_state.nlp = spacy.load('pt_core_news_sm')
+    
 except Exception as e:
-    st.error(f"Erro ao configurar o cliente OpenAI: {str(e)}")
-    sys.exit(1)
+    logger.error(f"Erro na inicialização dos clientes: {e}")
+    st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
 
-class RedacaoAssistant:
-    def __init__(self):
-        self.system_prompt = """Você é um assistente especializado e amigável de redação do ENEM.
-        Seu papel é conduzir uma conversa interativa com o estudante, ajudando-o a desenvolver sua redação passo a passo.
-        Seja específico nas orientações e mantenha um tom encorajador."""
-
-    def chat_with_user(self, prompt: str, history: Optional[List[Dict]] = None) -> Dict:
-        if history is None:
-            history = []
-        
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            *history,
-            {"role": "user", "content": prompt}
-        ]
-
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=messages,
-                temperature=0.7
-            )
-            return {"status": "success", "response": response.choices[0].message.content}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-# Inicialização do estado da sessão
-if 'stage' not in st.session_state:
-    st.session_state.stage = 'inicio'
-if 'assistant' not in st.session_state:
-    st.session_state.assistant = RedacaoAssistant()
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'redacao' not in st.session_state:
-    st.session_state.redacao = {
-        'tema': '',
-        'introducao': '',
-        'desenvolvimento1': '',
-        'desenvolvimento2': '',
-        'conclusao': ''
-    }
-
-# Interface Principal
-st.title("📝 Assistente Interativo de Redação ENEM")
-
-# Sidebar com progresso
-st.sidebar.title("Progresso da Redação")
-progress_items = {
-    'inicio': 'Planejamento Inicial',
-    'introducao': 'Introdução',
-    'desenvolvimento1': '1º Parágrafo',
-    'desenvolvimento2': '2º Parágrafo',
-    'conclusao': 'Conclusão',
-    'revisao': 'Revisão Final'
+# Constantes
+COMPETENCIES = {
+    "competency1": "Domínio da Norma Culta",
+    "competency2": "Compreensão do Tema",
+    "competency3": "Seleção e Organização das Informações",
+    "competency4": "Conhecimento dos Mecanismos Linguísticos",
+    "competency5": "Proposta de Intervenção"
 }
 
-for key, value in progress_items.items():
-    if st.session_state.stage == key:
-        st.sidebar.markdown(f"**→ {value}**")
-    elif list(progress_items.keys()).index(key) < list(progress_items.keys()).index(st.session_state.stage):
-        st.sidebar.markdown(f"✅ {value}")
-    else:
-        st.sidebar.markdown(f"◽ {value}")
+COMPETENCY_COLORS = {
+    "competency1": "#FF6B6B",
+    "competency2": "#4ECDC4",
+    "competency3": "#45B7D1",
+    "competency4": "#FFA07A",
+    "competency5": "#98D8C8"
+}
 
-def get_assistant_response(prompt: str) -> str:
-    response = st.session_state.assistant.chat_with_user(prompt, st.session_state.chat_history)
-    if response["status"] == "success":
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
-        st.session_state.chat_history.append({"role": "assistant", "content": response["response"]})
-        return response["response"]
-    return f"Desculpe, houve um erro: {response['message']}. Tente novamente."
+# Inicialização do estado da sessão
+if 'page' not in st.session_state:
+    st.session_state.page = 'envio'
 
-# Área principal - Diferentes estágios da redação
-if st.session_state.stage == 'inicio':
-    st.markdown("### 🎯 Vamos começar sua redação!")
-    
-    if not st.session_state.redacao['tema']:
-        tema_input = st.text_input("Sobre qual tema você quer escrever?")
-        if tema_input:
-            st.session_state.redacao['tema'] = tema_input
-            with st.spinner("Analisando o tema..."):
-                response = get_assistant_response(
-                    f"""O tema da redação é: {tema_input}. 
-                    Por favor, sugira:
-                    1. Possíveis argumentos
-                    2. Repertório sociocultural relevante
-                    3. Como estruturar a introdução"""
-                )
-                st.markdown(response)
-    
-    if st.session_state.redacao['tema']:
-        st.markdown(f"**Tema escolhido:** {st.session_state.redacao['tema']}")
-        
-        user_input = st.text_input("Pode me fazer perguntas sobre o tema ou pedir sugestões")
-        if user_input:
-            with st.spinner("Processando sua pergunta..."):
-                response = get_assistant_response(user_input)
-                st.markdown(response)
-        
-        if st.button("Começar a escrever a introdução"):
-            st.session_state.stage = 'introducao'
+def pagina_envio_redacao():
+    """Página principal de envio de redação"""
+    st.title("Sistema de Análise de Redação ENEM")
+
+    # Barra lateral para navegação
+    with st.sidebar:
+        if st.button("Nova Redação", key="nova_redacao"):
+            st.session_state.page = 'envio'
+            st.rerun()
+        if st.button("Tutoria", key="tutoria"):
+            st.session_state.page = 'tutoria'
             st.rerun()
 
-elif st.session_state.stage == 'introducao':
-    st.markdown("### 📝 Introdução")
-    st.markdown("Escreva um parágrafo introdutório que contextualize o tema e apresente sua tese.")
+    # Campo para tema
+    tema_redacao = st.text_input("Tema da redação:")
+
+    # Inicializar texto_redacao no session_state se não existir
+    if 'texto_redacao' not in st.session_state:
+        st.session_state.texto_redacao = ""
+
+    # Campo de texto para digitação
+    texto_redacao = st.text_area(
+        "Digite sua redação aqui:", 
+        value=st.session_state.texto_redacao,
+        height=400,
+        key="area_redacao"
+    )
+
+    # Upload de arquivo txt
+    st.write("Ou faça upload de um arquivo .txt")
+    uploaded_file = st.file_uploader("", type=['txt'], key="uploader")
     
-    col1, col2 = st.columns([2,1])
-    
-    with col1:
-        introducao = st.text_area("Seu parágrafo introdutório:", 
-                                value=st.session_state.redacao['introducao'],
-                                height=200)
-        if introducao != st.session_state.redacao['introducao']:
-            st.session_state.redacao['introducao'] = introducao
-            if introducao:
-                response = get_assistant_response(
-                    f"Analise este parágrafo introdutório: {introducao}"
-                )
-                st.session_state.last_feedback = response
-    
+    # Processar arquivo txt se fornecido
+    if uploaded_file is not None and not texto_redacao:
+        texto_redacao = uploaded_file.getvalue().decode("utf-8")
+        st.session_state.texto_redacao = texto_redacao
+
+    # Botão de processamento
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if 'last_feedback' in st.session_state:
-            st.markdown("### Feedback")
-            st.markdown(st.session_state.last_feedback)
+        if tema_redacao:
+            if st.button("Analisar Redação", key="processar_redacao", use_container_width=True):
+                if texto_redacao:
+                    with st.spinner("Analisando redação..."):
+                        try:
+                            # Análise com cohmetrix
+                            cohmetrix_results = analyze_with_cohmetrix(texto_redacao)
+                            
+                            # Processar redação
+                            resultados = processar_redacao_completa(
+                                texto_redacao, 
+                                tema_redacao, 
+                                cohmetrix_results
+                            )
+                            
+                            if resultados:
+                                # Atualizar estados da sessão
+                                st.session_state.update({
+                                    'resultados': resultados,
+                                    'tema_redacao': tema_redacao,
+                                    'redacao_texto': texto_redacao,
+                                    'texto_redacao': "",  # Limpar campo após processamento
+                                })
+                                
+                                st.success("Redação processada com sucesso!")
+                                st.session_state.page = 'resultado'
+                                st.rerun()
+                            else:
+                                st.error("Não foi possível processar a redação.")
+                        except Exception as e:
+                            st.error("Erro ao processar a redação.")
+                            logging.error(f"Erro ao processar redação: {str(e)}", exc_info=True)
+                else:
+                    st.warning("Por favor, insira o texto da redação antes de processar.")
+        else:
+            st.button("Analisar Redação", key="processar_redacao", 
+                     disabled=True, use_container_width=True)
+            st.warning("Por favor, forneça o tema da redação antes de processar.")
+
+def pagina_resultado_analise():
+    """Página de exibição dos resultados da análise"""
+    st.title("Resultado da Análise")
+
+    if 'resultados' not in st.session_state:
+        st.warning("Nenhuma análise disponível. Por favor, envie uma redação.")
+        if st.button("Voltar para Envio"):
+            st.session_state.page = 'envio'
+            st.rerun()
+        return
+
+    # Dados da análise
+    resultados = st.session_state.resultados
+    tema_redacao = st.session_state.tema_redacao
+    texto_redacao = st.session_state.redacao_texto
+
+    # Mostrar tema
+    st.subheader(f"Tema: {tema_redacao}")
+
+    # Criar tabs para cada competência
+    tabs = st.tabs([COMPETENCIES[comp] for comp in COMPETENCIES])
     
-    if st.button("Avançar para o desenvolvimento"):
-        st.session_state.stage = 'desenvolvimento1'
+    for i, (comp, tab) in enumerate(zip(COMPETENCIES, tabs)):
+        with tab:
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                # Análise detalhada
+                st.markdown("#### Análise Detalhada")
+                st.markdown(resultados['analises_detalhadas'][comp])
+                
+                # Mostrar erros específicos
+                if resultados['erros_especificos'].get(comp):
+                    st.markdown("#### Erros Identificados")
+                    for erro in resultados['erros_especificos'][comp]:
+                        with st.expander(f"Erro: {erro['descrição']}"):
+                            st.write(f"Trecho: '{erro['trecho']}'")
+                            st.write(f"Explicação: {erro['explicação']}")
+                            st.write(f"Sugestão: {erro['sugestão']}")
+            
+            with col2:
+                # Nota e justificativa
+                st.metric(
+                    "Nota",
+                    f"{resultados['notas'][comp]}/200",
+                    delta=None
+                )
+                if comp in resultados['justificativas']:
+                    st.write("**Justificativa da nota:**")
+                    st.write(resultados['justificativas'][comp])
+
+    # Nota total
+    st.metric(
+        "Nota Total",
+        f"{resultados['nota_total']}/1000",
+        delta=None
+    )
+
+    # Botões de navegação
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Nova Redação"):
+            st.session_state.page = 'envio'
+            st.rerun()
+    with col2:
+        if st.button("Iniciar Tutoria"):
+            st.session_state.page = 'tutoria'
+            st.rerun()
+
+def pagina_tutoria():
+    """Página principal do sistema de tutoria inteligente"""
+    st.title("Tutoria Personalizada")
+
+    # Verificar se há análise disponível
+    if 'resultados' not in st.session_state:
+        st.warning("É necessário analisar uma redação primeiro para iniciar a tutoria.")
+        if st.button("Enviar Redação"):
+            st.session_state.page = 'envio'
+            st.rerun()
+        return
+
+    # Inicializar estados da tutoria se necessário
+    if 'tutoria_estado' not in st.session_state:
+        st.session_state.tutoria_estado = {
+            'etapa': 'diagnostico',
+            'competencia_foco': None,
+            'exercicios_completos': set(),
+            'pontuacao': 0
+        }
+
+    # Sidebar com progresso e informações
+    with st.sidebar:
+        st.subheader("Seu Progresso")
+        st.progress(calcular_progresso_tutoria())
+        st.metric("Pontuação", st.session_state.tutoria_estado['pontuacao'])
+
+    # Lógica principal da tutoria baseada na etapa atual
+    etapa = st.session_state.tutoria_estado['etapa']
+
+    if etapa == 'diagnostico':
+        realizar_diagnostico()
+    elif etapa == 'plano_estudo':
+        mostrar_plano_estudo()
+    elif etapa == 'exercicios':
+        realizar_exercicios()
+    elif etapa == 'feedback':
+        mostrar_feedback_final()
+
+def realizar_diagnostico():
+    """Realiza diagnóstico inicial e identifica competência foco"""
+    st.subheader("Diagnóstico Inicial")
+
+    # Encontrar competência com menor nota
+    notas = st.session_state.resultados['notas']
+    competencia_foco = min(notas.items(), key=lambda x: x[1])[0]
+    
+    # Exibir análise geral
+    st.write("Com base na sua última redação, identificamos:")
+    
+    # Criar gráfico radar das competências
+    criar_grafico_radar(notas)
+    
+    # Mostrar competência foco
+    st.info(f"📍 Foco Recomendado: {COMPETENCIES[competencia_foco]}")
+    st.write(f"Nota atual: {notas[competencia_foco]}/200")
+    
+    if st.button("Iniciar Plano de Estudos"):
+        st.session_state.tutoria_estado['competencia_foco'] = competencia_foco
+        st.session_state.tutoria_estado['etapa'] = 'plano_estudo'
         st.rerun()
 
-elif st.session_state.stage == 'desenvolvimento1':
-    st.markdown("### 📝 Primeiro Parágrafo de Desenvolvimento")
+def mostrar_plano_estudo():
+    """Mostra e gerencia o plano de estudos personalizado"""
+    st.subheader("Seu Plano de Estudos")
     
-    col1, col2 = st.columns([2,1])
+    comp = st.session_state.tutoria_estado['competencia_foco']
+    erros = st.session_state.resultados['erros_especificos'].get(comp, [])
     
-    with col1:
-        desenvolvimento1 = st.text_area("Desenvolva seu primeiro argumento:", 
-                                      value=st.session_state.redacao['desenvolvimento1'],
-                                      height=200)
-        if desenvolvimento1 != st.session_state.redacao['desenvolvimento1']:
-            st.session_state.redacao['desenvolvimento1'] = desenvolvimento1
-            if desenvolvimento1:
-                response = get_assistant_response(
-                    f"Analise este parágrafo de desenvolvimento: {desenvolvimento1}"
-                )
-                st.session_state.last_feedback = response
+    # Gerar plano de estudos usando Claude
+    if 'plano_estudo' not in st.session_state.tutoria_estado:
+        plano = gerar_plano_estudo(comp, erros)
+        st.session_state.tutoria_estado['plano_estudo'] = plano
     
-    with col2:
-        if 'last_feedback' in st.session_state:
-            st.markdown("### Feedback")
-            st.markdown(st.session_state.last_feedback)
+    plano = st.session_state.tutoria_estado['plano_estudo']
     
-    if st.button("Avançar para o segundo parágrafo"):
-        st.session_state.stage = 'desenvolvimento2'
+    # Mostrar objetivos
+    st.markdown("### 🎯 Objetivos")
+    for obj in plano['objetivos']:
+        st.write(f"- {obj}")
+    
+    # Mostrar módulos de estudo
+    st.markdown("### 📚 Módulos de Estudo")
+    for i, modulo in enumerate(plano['modulos'], 1):
+        with st.expander(f"Módulo {i}: {modulo['titulo']}"):
+            st.write(modulo['descricao'])
+            st.write("**Conceitos-chave:**")
+            for conceito in modulo['conceitos']:
+                st.write(f"- {conceito}")
+    
+    if st.button("Começar Exercícios"):
+        st.session_state.tutoria_estado['etapa'] = 'exercicios'
         st.rerun()
 
-elif st.session_state.stage == 'desenvolvimento2':
-    st.markdown("### 📝 Segundo Parágrafo de Desenvolvimento")
+def realizar_exercicios():
+    """Gerencia a realização dos exercícios práticos"""
+    st.subheader("Exercícios Práticos")
     
-    col1, col2 = st.columns([2,1])
+    comp = st.session_state.tutoria_estado['competencia_foco']
     
+    # Gerar exercício se necessário
+    if 'exercicio_atual' not in st.session_state.tutoria_estado:
+        exercicio = gerar_exercicio(comp)
+        st.session_state.tutoria_estado['exercicio_atual'] = exercicio
+    
+    exercicio = st.session_state.tutoria_estado['exercicio_atual']
+    
+    # Mostrar exercício
+    st.markdown(f"### {exercicio['titulo']}")
+    st.write(exercicio['instrucoes'])
+    
+    # Campo para resposta
+    resposta = st.text_area("Sua resposta:", height=200)
+    
+    if st.button("Verificar"):
+        feedback = avaliar_resposta(exercicio, resposta, comp)
+        st.write(feedback['comentario'])
+        
+        # Gerar áudio do feedback
+        audio = gerar_audio_feedback(feedback['comentario'])
+        st.audio(audio)
+        
+        # Atualizar pontuação
+        st.session_state.tutoria_estado['pontuacao'] += feedback['pontos']
+        
+        # Opção para próximo exercício
+        if st.button("Próximo Exercício"):
+            del st.session_state.tutoria_estado['exercicio_atual']
+            st.rerun()
+
+def mostrar_feedback_final():
+    """Mostra feedback final e recomendações"""
+    st.subheader("Feedback Final")
+    
+    comp = st.session_state.tutoria_estado['competencia_foco']
+    pontuacao = st.session_state.tutoria_estado['pontuacao']
+    
+    # Gerar feedback geral
+    feedback = gerar_feedback_final(comp, pontuacao)
+    
+    st.markdown("### 🎉 Parabéns pelo seu progresso!")
+    st.write(feedback['mensagem'])
+    
+    # Mostrar estatísticas
+    col1, col2 = st.columns(2)
     with col1:
-        desenvolvimento2 = st.text_area("Desenvolva seu segundo argumento:", 
-                                      value=st.session_state.redacao['desenvolvimento2'],
-                                      height=200)
-        if desenvolvimento2 != st.session_state.redacao['desenvolvimento2']:
-            st.session_state.redacao['desenvolvimento2'] = desenvolvimento2
-            if desenvolvimento2:
-                response = get_assistant_response(
-                    f"Analise este segundo parágrafo: {desenvolvimento2}"
-                )
-                st.session_state.last_feedback = response
-    
+        st.metric("Pontuação Total", pontuacao)
     with col2:
-        if 'last_feedback' in st.session_state:
-            st.markdown("### Feedback")
-            st.markdown(st.session_state.last_feedback)
+        st.metric("Exercícios Completados", len(st.session_state.tutoria_estado['exercicios_completos']))
     
-    if st.button("Avançar para a conclusão"):
-        st.session_state.stage = 'conclusao'
+    # Recomendações
+    st.markdown("### 📚 Recomendações para Continuar")
+    for rec in feedback['recomendacoes']:
+        st.write(f"- {rec}")
+    
+    # Opções de navegação
+    if st.button("Nova Redação"):
+        st.session_state.page = 'envio'
         st.rerun()
 
-elif st.session_state.stage == 'conclusao':
-    st.markdown("### 📝 Conclusão")
-    st.markdown("Apresente sua proposta de intervenção.")
+def gerar_plano_estudo(competencia: str, erros: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Gera plano de estudos personalizado usando Claude"""
+    prompt = f"""
+    Com base na seguinte análise de uma redação do ENEM para a competência {COMPETENCIES[competencia]}:
     
-    col1, col2 = st.columns([2,1])
+    Erros identificados:
+    {json.dumps(erros, indent=2)}
     
-    with col1:
-        conclusao = st.text_area("Escreva sua conclusão:", 
-                               value=st.session_state.redacao['conclusao'],
-                               height=200)
-        if conclusao != st.session_state.redacao['conclusao']:
-            st.session_state.redacao['conclusao'] = conclusao
-            if conclusao:
-                response = get_assistant_response(
-                    f"Analise esta conclusão: {conclusao}"
-                )
-                st.session_state.last_feedback = response
+    Crie um plano de estudos personalizado que inclua:
+    1. 3 objetivos claros e específicos
+    2. 4 módulos de estudo progressivos
+    3. Conceitos-chave para cada módulo
     
-    with col2:
-        if 'last_feedback' in st.session_state:
-            st.markdown("### Feedback")
-            st.markdown(st.session_state.last_feedback)
+    O plano deve seguir uma progressão lógica e abordar os erros identificados.
     
-    if st.button("Fazer revisão final"):
-        st.session_state.stage = 'revisao'
-        st.rerun()
-
-elif st.session_state.stage == 'revisao':
-    st.markdown("### 📋 Revisão Final")
-    
-    texto_completo = f"""
-    {st.session_state.redacao['introducao']}
-
-    {st.session_state.redacao['desenvolvimento1']}
-
-    {st.session_state.redacao['desenvolvimento2']}
-
-    {st.session_state.redacao['conclusao']}
+    Responda em formato JSON com a seguinte estrutura:
+    {
+        "objetivos": ["objetivo 1", "objetivo 2", "objetivo 3"],
+        "modulos": [
+            {
+                "titulo": "título do módulo",
+                "descricao": "descrição detalhada",
+                "conceitos": ["conceito 1", "conceito 2", "conceito 3"]
+            }
+        ]
+    }
     """
     
-    col1, col2 = st.columns([2,1])
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(response.content)
+    except Exception as e:
+        logger.error(f"Erro ao gerar plano de estudos: {e}")
+        return {
+            "objetivos": ["Melhorar compreensão dos conceitos básicos"],
+            "modulos": [
+                {
+                    "titulo": "Módulo Básico",
+                    "descricao": "Revisão dos conceitos fundamentais",
+                    "conceitos": ["Conceito básico 1", "Conceito básico 2"]
+                }
+            ]
+        }
+
+def gerar_exercicio(competencia: str) -> Dict[str, Any]:
+    """Gera exercício personalizado baseado na competência"""
+    prompt = f"""
+    Crie um exercício prático para desenvolver habilidades na competência {COMPETENCIES[competencia]} do ENEM.
     
-    with col1:
-        st.markdown("### Sua Redação Completa")
-        st.text_area("Texto final:", value=texto_completo, height=400)
+    O exercício deve:
+    1. Ser específico e focado
+    2. Incluir instruções claras
+    3. Permitir prática objetiva
+    4. Ter critérios claros de avaliação
     
-    with col2:
-        if st.button("Analisar redação completa"):
-            response = get_assistant_response(
-                f"Faça uma análise completa desta redação, avaliando todas as competências do ENEM: {texto_completo}"
+    Responda em formato JSON com a seguinte estrutura:
+    {{
+        "titulo": "título do exercício",
+        "instrucoes": "instruções detalhadas",
+        "criterios": ["critério 1", "critério 2", "critério 3"],
+        "exemplo": "exemplo de resposta esperada"
+    }}
+    """
+    
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(response.content)
+    except Exception as e:
+        logger.error(f"Erro ao gerar exercício: {e}")
+        return {
+            "titulo": "Exercício Básico",
+            "instrucoes": "Desenvolva um parágrafo sobre o tema dado",
+            "criterios": ["Clareza", "Coesão", "Adequação"],
+            "exemplo": "Exemplo de resposta adequada"
+        }
+
+def avaliar_resposta(exercicio: Dict[str, Any], resposta: str, competencia: str) -> Dict[str, Any]:
+    """Avalia resposta do exercício usando Claude"""
+    prompt = f"""
+    Avalie a seguinte resposta para um exercício de {COMPETENCIES[competencia]}:
+    
+    Exercício:
+    {exercicio['instrucoes']}
+    
+    Critérios:
+    {json.dumps(exercicio['criterios'], indent=2)}
+    
+    Resposta do aluno:
+    {resposta}
+    
+    Forneça:
+    1. Análise detalhada
+    2. Pontos positivos
+    3. Pontos de melhoria
+    4. Sugestões específicas
+    5. Pontuação (0-10)
+    
+    Responda em formato JSON:
+    {{
+        "comentario": "feedback detalhado",
+        "pontos_positivos": ["ponto 1", "ponto 2"],
+        "pontos_melhoria": ["melhoria 1", "melhoria 2"],
+        "sugestoes": ["sugestão 1", "sugestão 2"],
+        "pontos": int
+    }}
+    """
+    
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(response.content)
+    except Exception as e:
+        logger.error(f"Erro ao avaliar resposta: {e}")
+        return {
+            "comentario": "Não foi possível avaliar a resposta",
+            "pontos_positivos": [],
+            "pontos_melhoria": [],
+            "sugestoes": [],
+            "pontos": 5
+        }
+
+def gerar_audio_feedback(texto: str) -> bytes:
+    """Gera áudio do feedback usando ElevenLabs"""
+    try:
+        return generate(text=texto)
+    except Exception as e:
+        logger.error(f"Erro ao gerar áudio: {e}")
+        return b""  # Retorna bytes vazios em caso de erro
+
+def calcular_progresso_tutoria() -> float:
+    """Calcula o progresso atual na trilha de tutoria"""
+    etapas = {
+        'diagnostico': 0.25,
+        'plano_estudo': 0.5,
+        'exercicios': 0.75,
+        'feedback': 1.0
+    }
+    return etapas.get(st.session_state.tutoria_estado['etapa'], 0)
+
+def gerar_feedback_final(competencia: str, pontuacao: int) -> Dict[str, Any]:
+    """Gera feedback final da tutoria"""
+    prompt = f"""
+    Gere um feedback final para um aluno que completou a tutoria em {COMPETENCIES[competencia]}
+    com pontuação {pontuacao}.
+    
+    Inclua:
+    1. Mensagem motivacional
+    2. Resumo do progresso
+    3. 3 recomendações específicas para continuar o desenvolvimento
+    
+    Responda em formato JSON:
+    {{
+        "mensagem": "mensagem personalizada",
+        "recomendacoes": ["recomendação 1", "recomendação 2", "recomendação 3"]
+    }}
+    """
+    
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(response.content)
+    except Exception as e:
+        logger.error(f"Erro ao gerar feedback final: {e}")
+        return {
+            "mensagem": "Parabéns pelo seu progresso!",
+            "recomendacoes": [
+                "Continue praticando regularmente",
+                "Revise os conceitos aprendidos",
+                "Aplique as técnicas em novas redações"
+            ]
+        }
+
+def criar_grafico_radar(notas: Dict[str, int]):
+    """Cria gráfico radar das competências"""
+    categorias = list(COMPETENCIES.values())
+    valores = list(notas.values())
+    
+    fig = go.Figure(data=go.Scatterpolar(
+        r=valores,
+        theta=categorias,
+        fill='toself',
+        line=dict(color='#4CAF50')
+    ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 200]
             )
-            st.markdown("### Análise Final")
-            st.markdown(response)
-
-# Botão para recomeçar (sempre visível)
-if st.sidebar.button("Recomeçar Redação"):
-    for key in st.session_state.keys():
-        del st.session_state[key]
-    st.rerun()
-
-# Estatísticas na sidebar
-if st.session_state.redacao['introducao']:
-    total_words = len(' '.join([
-        st.session_state.redacao['introducao'],
-        st.session_state.redacao['desenvolvimento1'],
-        st.session_state.redacao['desenvolvimento2'],
-        st.session_state.redacao['conclusao']
-    ]).split())
+        ),
+        showlegend=False,
+        title={
+            'text': 'Perfil de Competências',
+            'y':0.95,
+            'x':0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        }
+    )
     
-    st.sidebar.markdown("### Estatísticas")
-    st.sidebar.metric("Total de palavras", total_words)
+    st.plotly_chart(fig, use_container_width=True)
+
+def main():
+    """Função principal que controla o fluxo da aplicação"""
+    # Inicialização do estado se necessário
+    if 'page' not in st.session_state:
+        st.session_state.page = 'envio'
+    
+    # Barra lateral de navegação
+    with st.sidebar:
+        st.title("📝 Menu")
+        
+        if st.button("Nova Redação 📝"):
+            st.session_state.page = 'envio'
+            st.rerun()
+        
+        if 'resultados' in st.session_state:
+            if st.button("Ver Análise 📊"):
+                st.session_state.page = 'resultado'
+                st.rerun()
+            
+            if st.button("Tutoria 👨‍🏫"):
+                st.session_state.page = 'tutoria'
+                st.rerun()
+        
+        # Mostrar informações de progresso se estiver na tutoria
+        if st.session_state.page == 'tutoria' and 'tutoria_estado' in st.session_state:
+            st.divider()
+            st.subheader("Progresso")
+            st.progress(calcular_progresso_tutoria())
+            st.metric("Pontuação", st.session_state.tutoria_estado.get('pontuacao', 0))
+    
+    # Roteamento de páginas
+    if st.session_state.page == 'envio':
+        pagina_envio_redacao()
+    elif st.session_state.page == 'resultado':
+        if 'resultados' in st.session_state:
+            pagina_resultado_analise()
+        else:
+            st.warning("Nenhuma análise disponível. Envie uma redação primeiro.")
+            st.session_state.page = 'envio'
+            st.rerun()
+    elif st.session_state.page == 'tutoria':
+        if 'resultados' in st.session_state:
+            pagina_tutoria()
+        else:
+            st.warning("Nenhuma análise disponível. Envie uma redação primeiro.")
+            st.session_state.page = 'envio'
+            st.rerun()
+    else:
+        st.error("Página não encontrada")
+        st.session_state.page = 'envio'
+        st.rerun()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Erro inesperado: {str(e)}")
+        logger.error(f"Erro inesperado na aplicação: {str(e)}", exc_info=True)
