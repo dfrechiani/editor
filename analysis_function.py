@@ -20,8 +20,6 @@ def processar_redacao_completa(redacao_texto: str, tema_redacao: Dict[str, Any])
   Args:
       redacao_texto: Texto da redação
       tema_redacao: Tema da redação
-      cohmetrix_results: Resultados da análise Coh-Metrix
-      user_id: ID do usuário
       
   Returns:
       Dict contendo todos os resultados da análise
@@ -88,14 +86,14 @@ def processar_redacao_completa(redacao_texto: str, tema_redacao: Dict[str, Any])
   
   # Salvar no Elasticsearch
   try:
-      save_redacao_es(user_id, redacao_texto, tema_redacao, resultados['notas'], resultados['analises_detalhadas'])
+      save_redacao_es(, redacao_texto, tema_redacao, resultados['notas'], resultados['analises_detalhadas'])
   except Exception as e:
       logger.error(f"Erro ao salvar no Elasticsearch: {str(e)}")
   
   # Salvar no Supabase
   try:
       save_redacao(
-          user_id,
+          ,
           redacao_texto,
           tema_redacao,
           resultados['notas'],
