@@ -1,6 +1,8 @@
 import json
 import logging
 from typing import Any, Dict, List
+import streamlit as st
+
 
 # Verifique se o Streamlit está instalado antes de importar
 try:
