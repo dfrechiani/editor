@@ -1,11 +1,22 @@
+# Recomendado usar Python 3.10 ou 3.11:
+# Coloque em runtime.txt do Streamlit Cloud (exemplo): "python-3.10"
+
 streamlit==1.31.0
-numpy==1.23.5
-spacy==3.4.4
-pandas==1.5.3
-plotly==5.13.1
+
+# Pacotes "core"
 anthropic==0.8.1
 elevenlabs==1.13.5
 python-dotenv==1.0.0
 typing-extensions==4.5.0
+
+# Pode fixar pandas/plotly se desejar, mas aqui deixamos mais flexível:
+pandas>=1.5
+plotly>=5.13
+
+# Mantenha Numpy e SpaCy em intervalos razoáveis para evitar conflitos.
+# Exemplo: SpaCy 3.4.x a 3.6.x e Numpy acima de 1.23.x
+numpy>=1.23
+spacy>=3.4,<3.7
+
+# Instala o modelo de português do SpaCy (3.4.x) diretamente do GitHub
 https://github.com/explosion/spacy-models/releases/download/pt_core_news_sm-3.4.0/pt_core_news_sm-3.4.0-py3-none-any.whl
-python-3.10
