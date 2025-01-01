@@ -1,4 +1,15 @@
 from typing import Any, Dict, List
+import logging
+
+# Configuração básica do logger
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Agora você pode usar o logger no seu código
+logger.debug("Mensagem de debug")
+logger.info("Mensagem de informação")
+logger.warning("Mensagem de aviso")
+
 
 def processar_redacao_completa(redacao_texto: str, tema_redacao: Dict[str, Any]) -> Dict[str, Any]:
   """
