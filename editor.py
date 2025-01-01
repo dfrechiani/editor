@@ -50,9 +50,16 @@ COMPETENCIES = {
 if 'page' not in st.session_state:
     st.session_state.page = 'envio'
 
+try:
+    anthropic_client = anthropic.Client(api_key=st.secrets["anthropic"]["api_key"])
+except Exception as e:
+    logger.error(f"Erro na inicialização do cliente Anthropic: {e}")
+    st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
+
 def processar_redacao_com_ia(texto: str, tema: str) -> Dict[str, Any]:
     """Processa a redação usando a API da Anthropic."""
     prompt = f"""
+    {anthropic.HUMAN_PROMPT}
     Tema: {tema}
     Redação:
     {texto}
@@ -68,12 +75,15 @@ def processar_redacao_com_ia(texto: str, tema: str) -> Dict[str, Any]:
     1. Uma nota de 0 a 200.
     2. Justificativa da nota.
     3. Trechos com erros específicos (se houver).
+
+    {anthropic.AI_PROMPT}
     """
     try:
-        response = anthropic_client.completions.create(
-            model="claude-2",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}]
+        response = anthropic_client.completion(
+            prompt=prompt,
+            model="claude-1",  # Verifique o modelo correto
+            max_tokens_to_sample=3000,
+            temperature=0.7
         )
         return json.loads(response["completion"])
     except Exception as e:
