@@ -19,10 +19,17 @@ logger = logging.getLogger(__name__)
 
 # Inicialização do cliente Anthropic
 try:
+    # Apenas inicializa o cliente com a chave de API
     anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
+except TypeError as e:
+    # Captura erros específicos, como argumentos inesperados
+    logger.error(f"Erro de tipo na inicialização do cliente Anthropic: {e}")
+    st.error("Erro na configuração do cliente Anthropic. Verifique a versão da biblioteca e os parâmetros.")
 except Exception as e:
+    # Captura outros erros gerais
     logger.error(f"Erro na inicialização do cliente Anthropic: {e}")
     st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
+
 
 
 # Configuração da ElevenLabs
