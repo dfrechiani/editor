@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
 import logging
+import streamlit as st
+
 
 # Configuração básica do logger
 logging.basicConfig(level=logging.DEBUG)
