@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from collections import Counter
 import spacy
 from anthropic import Anthropic
-from elevenlabs import Voice, TextToSpeech, set_api_key
+from elevenlabs import set_api_key, generate
 
 
 # Configuração inicial do Streamlit
@@ -506,13 +506,12 @@ def gerar_audio_feedback(texto: str) -> bytes:
         # Configure a chave da API a partir do Streamlit Secrets
         set_api_key(st.secrets["elevenlabs"]["api_key"])
 
-        # Gere o áudio com o texto fornecido, especificando a voz em português
+        # Gere o áudio com texto em português do Brasil
         audio = generate(
             text=texto,
-            voice="Camila",  # Substitua por uma voz brasileira disponível na ElevenLabs
-            model="eleven_multilingual_v1"
+            voice="Camila",  # Substitua pelo nome de uma voz disponível em português no painel ElevenLabs
+            model="eleven_multilingual_v1"  # Modelo multilíngue
         )
-
         return audio  # Retorna o áudio como bytes
     except Exception as e:
         logger.error(f"Erro ao gerar áudio: {e}")
