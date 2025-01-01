@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from collections import Counter
 import spacy
 from anthropic import Anthropic
-from elevenlabs import generate
+from elevenlabs import generate_audio
 
 # Configuração inicial do Streamlit
 st.set_page_config(
