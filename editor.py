@@ -2,10 +2,9 @@ import os
 import streamlit as st
 import logging
 import json
-from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, Any
 from anthropic import Anthropic
-from elevenlabs import set_api_key, generate
+from elevenlabs import set_api_key
 
 # Configuração inicial do Streamlit
 st.set_page_config(
@@ -41,14 +40,6 @@ COMPETENCIES = {
     "competency5": "Proposta de Intervenção"
 }
 
-COMPETENCY_COLORS = {
-    "competency1": "#FF6B6B",
-    "competency2": "#4ECDC4",
-    "competency3": "#45B7D1",
-    "competency4": "#FFA07A",
-    "competency5": "#98D8C8"
-}
-
 # Inicialização do estado da sessão
 if 'page' not in st.session_state:
     st.session_state.page = 'envio'
@@ -73,8 +64,8 @@ def processar_redacao_com_ia(texto: str, tema: str) -> Dict[str, Any]:
     3. Trechos com erros específicos (se houver).
     """
     try:
-        response = anthropic_client.messages.create(
-            model="claude-3",
+        response = anthropic_client.completions.create(
+            model="claude-2",
             max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -120,8 +111,8 @@ def pagina_resultado_analise():
 
     for comp, details in resultados.items():
         st.markdown(f"### {COMPETENCIES.get(comp, 'Competência desconhecida')}")
-        st.write(f"**Nota:** {details['nota']}/200")
-        st.write(f"**Justificativa:** {details['justificativa']}")
+        st.write(f"**Nota:** {details.get('nota', 'Não disponível')}/200")
+        st.write(f"**Justificativa:** {details.get('justificativa', 'Não disponível')}")
         if details.get("erros"):
             st.markdown("#### Erros Identificados:")
             for erro in details["erros"]:
