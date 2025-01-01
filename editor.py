@@ -24,6 +24,7 @@ except Exception as e:
     logger.error(f"Erro na inicialização do cliente Anthropic: {e}")
     st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
 
+
 # Configuração da ElevenLabs
 try:
     set_api_key(st.secrets["elevenlabs"]["api_key"])
