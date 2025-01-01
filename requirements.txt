@@ -1,8 +1,9 @@
 streamlit
-spacy
 plotly
 anthropic
+spacy==3.6.1
 pydantic==1.10.12
 elevenlabs==0.2.16
+
 
 
