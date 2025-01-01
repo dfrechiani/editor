@@ -1,145 +1,94 @@
-import os
-import streamlit as st
-import logging
 import json
-from typing import Dict, Any
-from anthropic import Client 
-from elevenlabs import set_api_key
+import logging
+from typing import Dict, List
 
-# Configuração inicial do Streamlit
-st.set_page_config(
-    page_title="Sistema de Redação ENEM",
-    page_icon="📝",
-    layout="wide"
-)
+# Verifique se o Streamlit está instalado antes de importar
+try:
+    import streamlit as st
+    # Configuração inicial do Streamlit
+    st.set_page_config(page_title="Trilha de Competências - ENEM", page_icon="📝", layout="wide")
+except ModuleNotFoundError as e:
+    raise RuntimeError("O módulo Streamlit não está instalado no ambiente. Certifique-se de que Streamlit esteja disponível antes de executar o código.")
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-from anthropic import Client  # Atualize a importação para usar Client
-
-# Inicialização do cliente Anthropic
-try:
-    # Inicializando o cliente com a chave de API
-    anthropic_client = Client(api_key=st.secrets["anthropic"]["api_key"])
-except Exception as e:
-    logger.error(f"Erro na inicialização do cliente Anthropic: {e}")
-    st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
-
-
-
-
-# Configuração da ElevenLabs
-try:
-    set_api_key(st.secrets["elevenlabs"]["api_key"])
-except Exception as e:
-    logger.error(f"Erro ao inicializar ElevenLabs: {e}")
-    st.error("Erro ao configurar a API ElevenLabs.")
-
-# Constantes
-COMPETENCIES = {
-    "competency1": "Domínio da Norma Culta",
-    "competency2": "Compreensão do Tema",
-    "competency3": "Seleção e Organização das Informações",
-    "competency4": "Conhecimento dos Mecanismos Linguísticos",
-    "competency5": "Proposta de Intervenção"
-}
+logger = logging.getLogger("Trilha de Competências")
 
 # Inicialização do estado da sessão
-if 'page' not in st.session_state:
-    st.session_state.page = 'envio'
+if 'trilha' not in st.session_state:
+    st.session_state.trilha = {}
 
-try:
-    anthropic_client = anthropic.Client(api_key=st.secrets["anthropic"]["api_key"])
-except Exception as e:
-    logger.error(f"Erro na inicialização do cliente Anthropic: {e}")
-    st.error("Erro ao inicializar conexões. Por favor, tente novamente mais tarde.")
+COMPETENCIAS = {
+    "competencia1": "Domínio da Norma Culta",
+    "competencia2": "Compreensão do Tema",
+    "competencia3": "Seleção e Organização das Informações",
+    "competencia4": "Conhecimento dos Mecanismos Linguísticos",
+    "competencia5": "Proposta de Intervenção"
+}
 
-def processar_redacao_com_ia(texto: str, tema: str) -> Dict[str, Any]:
-    """Processa a redação usando a API da Anthropic."""
-    prompt = f"""
-    {anthropic.HUMAN_PROMPT}
-    Tema: {tema}
-    Redação:
-    {texto}
-    
-    Analise a redação acima de acordo com as competências do ENEM:
-    - Competência 1: Domínio da Norma Culta
-    - Competência 2: Compreensão do Tema
-    - Competência 3: Seleção e Organização das Informações
-    - Competência 4: Conhecimento dos Mecanismos Linguísticos
-    - Competência 5: Proposta de Intervenção
+def apresentar_competencia(competencia: str):
+    """Apresenta a competência selecionada."""
+    st.subheader(f"Competência: {COMPETENCIAS[competencia]}")
+    st.write(f"Nesta etapa, analisaremos a {COMPETENCIAS[competencia]}.")
 
-    Para cada competência, forneça:
-    1. Uma nota de 0 a 200.
-    2. Justificativa da nota.
-    3. Trechos com erros específicos (se houver).
+def identificar_agrupamento_erros(competencia: str, erros_extraidos: List[str]):
+    """Identifica e agrupa os erros extraídos pela análise."""
+    st.subheader("Identificação e Agrupamento de Erros")
+    if erros_extraidos:
+        st.write("### Erros Detectados:")
+        for erro in erros_extraidos:
+            st.markdown(f"- {erro}")
+    else:
+        st.write("Nenhum erro detectado.")
 
-    {anthropic.AI_PROMPT}
-    """
+def teoria_exercicios_personalizados(erros_detectados: List[str]):
+    """Apresenta teoria e exercícios personalizados para os erros detectados."""
+    st.subheader("Teoria e Exercícios Personalizados")
+    for erro in erros_detectados:
+        st.write(f"**Erro:** {erro}")
+        st.write(f"Teoria sobre {erro}:")
+        st.write("Aqui você encontrará explicações detalhadas e exemplos sobre como corrigir esse tipo de erro.")
+        st.write(f"Exercício: Corrija a frase abaixo que contém um erro de {erro}.")
+
+def finalizar_competencia(competencia: str, progresso: Dict[str, any]):
+    """Finaliza a análise de uma competência e salva o progresso."""
+    st.session_state.trilha[competencia] = progresso
+    st.success(f"A competência {COMPETENCIAS[competencia]} foi concluída com sucesso!")
+
+def processar_redacao(competencia: str, texto_redacao: str) -> List[str]:
+    """Chama a função de análise correspondente para processar a redação."""
     try:
-        response = anthropic_client.completion(
-            prompt=prompt,
-            model="claude-1",  # Verifique o modelo correto
-            max_tokens_to_sample=3000,
-            temperature=0.7
-        )
-        return json.loads(response["completion"])
+        from analysis_function import processar_redacao_completa
+        resultados = processar_redacao_completa(texto_redacao, competencia)
+        return resultados.get('erros', [])
+    except ImportError as e:
+        st.error("Erro ao importar a função de análise. Verifique se o arquivo 'analysis_function.py' está correto.")
+        logger.error(f"Erro ao importar função de análise: {e}")
+        return []
     except Exception as e:
-        logger.error(f"Erro ao processar redação com IA: {e}")
-        return {}
+        st.error("Erro ao processar a redação. Tente novamente.")
+        logger.error(f"Erro ao processar redação: {e}")
+        return []
 
-def pagina_envio_redacao():
-    """Página principal de envio de redação"""
-    st.title("Sistema de Análise de Redação ENEM")
+def trilha_de_competencias():
+    """Interface principal para trilha de competências."""
+    st.title("Trilha de Competências ENEM")
 
-    tema_redacao = st.text_input("Tema da redação:")
-    texto_redacao = st.text_area("Digite sua redação aqui:", height=400)
+    texto_redacao = st.text_area("Digite a redação para análise:", height=300)
 
-    if st.button("Analisar Redação"):
-        if tema_redacao and texto_redacao:
-            with st.spinner("Analisando redação..."):
-                resultados = processar_redacao_com_ia(texto_redacao, tema_redacao)
-                if resultados:
-                    st.session_state.resultados = resultados
-                    st.session_state.tema_redacao = tema_redacao
-                    st.session_state.texto_redacao = texto_redacao
-                    st.session_state.page = 'resultado'
-                    st.experimental_rerun()
-                else:
-                    st.error("Erro ao processar a redação.")
-        else:
-            st.warning("Por favor, insira o tema e o texto da redação.")
-
-def pagina_resultado_analise():
-    """Página de exibição dos resultados da análise"""
-    st.title("Resultado da Análise")
-
-    if 'resultados' not in st.session_state:
-        st.warning("Nenhuma análise disponível. Por favor, envie uma redação.")
+    if not texto_redacao.strip():
+        st.warning("Por favor, insira o texto da redação para começar.")
         return
 
-    resultados = st.session_state.resultados
-    tema_redacao = st.session_state.tema_redacao
+    competencia_selecionada = st.selectbox("Escolha a competência para análise:", options=list(COMPETENCIAS.keys()), format_func=lambda x: COMPETENCIAS[x])
 
-    st.subheader(f"Tema: {tema_redacao}")
-
-    for comp, details in resultados.items():
-        st.markdown(f"### {COMPETENCIES.get(comp, 'Competência desconhecida')}")
-        st.write(f"**Nota:** {details.get('nota', 'Não disponível')}/200")
-        st.write(f"**Justificativa:** {details.get('justificativa', 'Não disponível')}")
-        if details.get("erros"):
-            st.markdown("#### Erros Identificados:")
-            for erro in details["erros"]:
-                st.write(f"- {erro}")
-
-def main():
-    """Função principal que controla o fluxo da aplicação"""
-    if st.session_state.page == 'envio':
-        pagina_envio_redacao()
-    elif st.session_state.page == 'resultado':
-        pagina_resultado_analise()
+    if st.button("Iniciar Análise"):
+        apresentar_competencia(competencia_selecionada)
+        erros_detectados = processar_redacao(competencia_selecionada, texto_redacao)
+        identificar_agrupamento_erros(competencia_selecionada, erros_detectados)
+        teoria_exercicios_personalizados(erros_detectados)
+        progresso = {"erros": erros_detectados, "texto": texto_redacao}
+        finalizar_competencia(competencia_selecionada, progresso)
 
 if __name__ == "__main__":
-    main()
+    trilha_de_competencias()
