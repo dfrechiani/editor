@@ -494,13 +494,17 @@ def avaliar_resposta(exercicio: Dict[str, Any], resposta: str, competencia: str)
             "pontos": 5
         }
 
+from elevenlabs import generate_audio
+
+# Substitua a chamada de 'generate' por 'generate_audio'
 def gerar_audio_feedback(texto: str) -> bytes:
     """Gera áudio do feedback usando ElevenLabs"""
     try:
-        return generate(text=texto)
+        return generate_audio(text=texto)  # Use generate_audio em vez de generate
     except Exception as e:
         logger.error(f"Erro ao gerar áudio: {e}")
         return b""  # Retorna bytes vazios em caso de erro
+
 
 def calcular_progresso_tutoria() -> float:
     """Calcula o progresso atual na trilha de tutoria"""
