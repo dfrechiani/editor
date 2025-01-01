@@ -1,5 +1,6 @@
-anthropic==0.2.7  # Substitua pela versão mais recente estável
-streamlit==1.26.0  # Exemplo da versão do Streamlit (confirme a sua)
+--upgrade pip
+streamlit==1.41.1
+pillow==9.5.0
+anthropic==0.2.7
 elevenlabs==0.2.16
-python-dotenv==1.0.0  # Caso esteja usando para gerenciar variáveis de ambiente
-
+python-dotenv==1.0.0
