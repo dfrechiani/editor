@@ -1,3 +1,5 @@
+from typing import Dict, List
+
 def processar_redacao_completa(redacao_texto: str, tema_redacao: str, cohmetrix_results: Dict[str, Any], user_id: int) -> Dict[str, Any]:
   """
   Processa a redação completa e gera todos os resultados necessários.
