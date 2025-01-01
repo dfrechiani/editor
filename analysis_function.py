@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-def processar_redacao_completa(redacao_texto: str, tema_redacao: str: Dict[str, Any]) -> Dict[str, Any]:
+def processar_redacao_completa(redacao_texto: str, tema_redacao: Dict[str, Any]) -> Dict[str, Any]:
   """
   Processa a redação completa e gera todos os resultados necessários.
   
