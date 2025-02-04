@@ -4,8 +4,6 @@ import json
 import openai
 from datetime import datetime, timedelta
 
-import streamlit as st
-import os
 
 st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser o primeiro comando!
 
@@ -573,9 +571,7 @@ def criar_card_estudo(tag, titulo, descricao, tempo="30min"):
    </div>
    """
 
-def main():
-   st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")
-   
+def main():   
    banco = BancoQuestoesEnem()
    gerador = GeradorConteudo()
    
