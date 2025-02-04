@@ -457,7 +457,7 @@ class BancoQuestoesEnem:
 
 class GeradorConteudo:
    def __init__(self):
-       self.model = "gpt-3.5-turbo"
+       self.model = "o3-mini"
        
    def gerar_material_estudo(self, tema, questoes, nivel_profundidade="alto"):
        prompt = self._criar_prompt_estudo(tema, questoes, nivel_profundidade)
