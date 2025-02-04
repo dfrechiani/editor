@@ -4,11 +4,6 @@ import json
 from openai import OpenAI
 from datetime import datetime, timedelta
 
-
-import streamlit as st
-import os
-from openai import OpenAI
-
 st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser a primeira linha!
 
 # 🔍 Carregar a chave corretamente
@@ -19,9 +14,11 @@ if not openai_api_key:
 else:
     st.success("✅ Chave da API carregada com sucesso!")
 
-# ✅ Criar a instância do cliente OpenAI SOMENTE se a chave existir
-if openai_api_key:
-    client = OpenAI(api_key=openai_api_key)
+# ✅ Definir a chave de API corretamente antes de criar o cliente OpenAI
+os.environ["OPENAI_API_KEY"] = openai_api_key  # OpenAI agora lê a chave diretamente do ambiente
+
+# Criar cliente OpenAI corretamente, sem passar a chave diretamente
+client = OpenAI()
 
 
 class BancoQuestoesEnem:
