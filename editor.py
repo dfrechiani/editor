@@ -514,7 +514,7 @@ class GeradorConteudo:
        
    def _fazer_requisicao(self, prompt):
        try:
-           response = openai.ChatCompletion.create(
+           esponse = client.chat.completions.create(
                model=self.model,
                messages=[
                    {"role": "system", "content": (
