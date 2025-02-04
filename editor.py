@@ -4,11 +4,26 @@ import json
 import openai
 from datetime import datetime, timedelta
 
-# Verifica se a chave existe antes de acessá-la
+import streamlit as st
+import os
+
+st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser o primeiro comando!
+
+# Teste se a chave existe no `st.secrets`
 if "openai_api_key" in st.secrets:
-    openai.api_key = st.secrets["openai_api_key"]
+    openai_api_key = st.secrets["openai_api_key"]
+    st.success("Chave da API carregada com sucesso!")
 else:
-    st.error("Erro: A chave da API OpenAI não foi encontrada no st.secrets.")
+    openai_api_key = os.getenv("OPENAI_API_KEY")  # Alternativa se não estiver em st.secrets
+    if openai_api_key:
+        st.warning("Chave carregada do ambiente do sistema.")
+    else:
+        st.error("A chave da API OpenAI não foi encontrada. Verifique `Manage app > Secrets` no Streamlit Cloud.")
+
+# Exibir as chaves disponíveis (sem mostrar valores)
+st.write("🔍 Chaves disponíveis no `st.secrets`:")
+st.write(list(st.secrets.keys()))
+
 class BancoQuestoesEnem:
    def __init__(self):
        self.generos_textuais = {
