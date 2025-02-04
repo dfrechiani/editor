@@ -1,11 +1,15 @@
 import streamlit as st
 import pandas as pd
 import json
-import openai
+from openai import OpenAI
 from datetime import datetime, timedelta
 
 
 st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser o primeiro comando!
+
+# Criar uma instância do cliente OpenAI
+client = OpenAI(api_key=openai_api_key)
+
 
 # Teste se a chave existe no `st.secrets`
 if "openai_api_key" in st.secrets:
@@ -513,23 +517,24 @@ class GeradorConteudo:
        """
        
    def _fazer_requisicao(self, prompt):
-       try:
-           esponse = client.chat.completions.create(
-               model=self.model,
-               messages=[
-                   {"role": "system", "content": (
-                       "Você é um professor especialista em preparação para o ENEM, "
-                       "com vasta experiência em linguagens e suas tecnologias. "
-                       "Forneça explicações profundas mas claras, usando exemplos práticos."
-                   )},
-                   {"role": "user", "content": prompt}
-               ],
-               temperature=0.7,
-               max_tokens=2000
-           )
-           return response.choices[0].message.content
-       except Exception as e:
-           return f"Erro ao gerar conteúdo: {str(e)}"
+    try:
+        response = client.chat.completions.create(  # Agora 'client' está definido corretamente
+            model=self.model,
+            messages=[
+                {"role": "system", "content": (
+                    "Você é um professor especialista em preparação para o ENEM, "
+                    "com vasta experiência em linguagens e suas tecnologias. "
+                    "Forneça explicações profundas mas claras, usando exemplos práticos."
+                )},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Erro ao gerar conteúdo: {str(e)}"
+
 
 def criar_estilo():
    return """
