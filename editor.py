@@ -4,9 +4,11 @@ import json
 import openai
 from datetime import datetime, timedelta
 
-# Configuração da API OpenAI
-openai.api_key = st.secrets["openai_api_key"]
-
+# Verifica se a chave existe antes de acessá-la
+if "openai_api_key" in st.secrets:
+    openai.api_key = st.secrets["openai_api_key"]
+else:
+    st.error("Erro: A chave da API OpenAI não foi encontrada no st.secrets.")
 class BancoQuestoesEnem:
    def __init__(self):
        self.generos_textuais = {
