@@ -5,26 +5,24 @@ from openai import OpenAI
 from datetime import datetime, timedelta
 
 
-st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser o primeiro comando!
+import streamlit as st
+import os
+from openai import OpenAI
 
-# Criar uma instância do cliente OpenAI
-client = OpenAI(api_key=openai_api_key)
+st.set_page_config(page_title="ENEM Linguagens - Plano de Estudos", layout="wide")  # Deve ser a primeira linha!
 
+# 🔍 Carregar a chave corretamente
+openai_api_key = st.secrets.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
 
-# Teste se a chave existe no `st.secrets`
-if "openai_api_key" in st.secrets:
-    openai_api_key = st.secrets["openai_api_key"]
-    st.success("Chave da API carregada com sucesso!")
+if not openai_api_key:
+    st.error("❌ A chave da API OpenAI não foi encontrada. Verifique `Manage app > Secrets` no Streamlit Cloud.")
 else:
-    openai_api_key = os.getenv("OPENAI_API_KEY")  # Alternativa se não estiver em st.secrets
-    if openai_api_key:
-        st.warning("Chave carregada do ambiente do sistema.")
-    else:
-        st.error("A chave da API OpenAI não foi encontrada. Verifique `Manage app > Secrets` no Streamlit Cloud.")
+    st.success("✅ Chave da API carregada com sucesso!")
 
-# Exibir as chaves disponíveis (sem mostrar valores)
-st.write("🔍 Chaves disponíveis no `st.secrets`:")
-st.write(list(st.secrets.keys()))
+# ✅ Criar a instância do cliente OpenAI SOMENTE se a chave existir
+if openai_api_key:
+    client = OpenAI(api_key=openai_api_key)
+
 
 class BancoQuestoesEnem:
    def __init__(self):
@@ -518,7 +516,7 @@ class GeradorConteudo:
        
    def _fazer_requisicao(self, prompt):
     try:
-        response = client.chat.completions.create(  # Agora 'client' está definido corretamente
+        response = client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": (
@@ -534,6 +532,7 @@ class GeradorConteudo:
         return response.choices[0].message.content
     except Exception as e:
         return f"Erro ao gerar conteúdo: {str(e)}"
+
 
 
 def criar_estilo():
